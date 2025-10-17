@@ -214,7 +214,7 @@ public:
         return true;
     }
 
-    // 转换 16-bit PCM 数据
+    // 转换音频数据（支持 16-bit 和 32-bit float）
     bool Process(const BYTE* inputData, UINT32 inputFrames, std::vector<BYTE>& outputData) {
         if (!srcState) return false;
         
@@ -231,10 +231,23 @@ public:
         size_t inputSamples = inputFrames * channels;
         inputBuffer.resize(inputSamples);
 
-        const int16_t* int16Data = reinterpret_cast<const int16_t*>(inputData);
-        for (size_t i = 0; i < inputSamples; i++) {
-            // 正确的归一化：范围 [-1.0, 1.0)
-            inputBuffer[i] = int16Data[i] * (1.0f / 32768.0f);
+        // 根据位深度转换输入数据为 float
+        if (bitsPerSample == 16) {
+            const int16_t* int16Data = reinterpret_cast<const int16_t*>(inputData);
+            for (size_t i = 0; i < inputSamples; i++) {
+                // 正确的归一化：范围 [-1.0, 1.0)
+                inputBuffer[i] = int16Data[i] * (1.0f / 32768.0f);
+            }
+        }
+        else if (bitsPerSample == 32) {
+            const float* floatData = reinterpret_cast<const float*>(inputData);
+            for (size_t i = 0; i < inputSamples; i++) {
+                inputBuffer[i] = floatData[i];
+            }
+        }
+        else {
+            std::cerr << "Unsupported bit depth for resampling: " << bitsPerSample << std::endl;
+            return false;
         }
 
         // 准备输出缓冲
@@ -268,18 +281,29 @@ public:
             firstProcess = false;
         }
 
-        // 转换回 16-bit PCM
+        // 转换回原始位深度
         size_t actualOutputSamples = srcData.output_frames_gen * channels;
-        outputData.resize(actualOutputSamples * sizeof(int16_t));
-        int16_t* outputInt16 = reinterpret_cast<int16_t*>(outputData.data());
+        
+        if (bitsPerSample == 16) {
+            outputData.resize(actualOutputSamples * sizeof(int16_t));
+            int16_t* outputInt16 = reinterpret_cast<int16_t*>(outputData.data());
 
-        for (size_t i = 0; i < actualOutputSamples; i++) {
-            float sample = outputBuffer[i] * 32768.0f;
-            // 限幅到 16-bit 范围
-            if (sample > 32767.0f) sample = 32767.0f;
-            if (sample < -32768.0f) sample = -32768.0f;
-            // 使用舍入而不是截断，减少量化噪声
-            outputInt16[i] = static_cast<int16_t>(sample >= 0.0f ? sample + 0.5f : sample - 0.5f);
+            for (size_t i = 0; i < actualOutputSamples; i++) {
+                float sample = outputBuffer[i] * 32768.0f;
+                // 限幅到 16-bit 范围
+                if (sample > 32767.0f) sample = 32767.0f;
+                if (sample < -32768.0f) sample = -32768.0f;
+                // 使用舍入而不是截断，减少量化噪声
+                outputInt16[i] = static_cast<int16_t>(sample >= 0.0f ? sample + 0.5f : sample - 0.5f);
+            }
+        }
+        else if (bitsPerSample == 32) {
+            outputData.resize(actualOutputSamples * sizeof(float));
+            float* outputFloat = reinterpret_cast<float*>(outputData.data());
+
+            for (size_t i = 0; i < actualOutputSamples; i++) {
+                outputFloat[i] = outputBuffer[i];
+            }
         }
 
         return true;
