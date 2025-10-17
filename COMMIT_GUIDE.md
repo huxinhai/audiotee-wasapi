@@ -6,6 +6,7 @@
 - [x] libsamplerate 源码已放在 `third_party/libsamplerate/`
 - [x] CMakeLists.txt 已配置为使用本地 libsamplerate
 - [x] wasapi_capture.cpp 已移除冲突的 pragma 指令
+- [x] **修复了 libsamplerate 的 CMake 版本兼容性** (3.5...3.30)
 - [x] .gitignore 已配置正确
 - [x] 临时文件已清理
 
@@ -24,6 +25,7 @@ git commit -m "feat: 集成 libsamplerate 支持自定义采样率
 
 - 添加 libsamplerate 源码到 third_party/
 - 更新 CMakeLists.txt 使用本地 libsamplerate
+- 修复 libsamplerate CMake 版本兼容性 (3.5...3.30)
 - 实现 AudioResampler 类支持高质量重采样
 - 移除冲突的 pragma comment 指令
 - 添加下载辅助脚本"
