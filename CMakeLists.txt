@@ -4,6 +4,8 @@ project(WASAPICapture)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
 include(FetchContent)
 
 FetchContent_Declare(
@@ -15,6 +17,9 @@ FetchContent_MakeAvailable(libsamplerate)
 
 # Add executable
 add_executable(wasapi_capture src/wasapi_capture.cpp)
+
+target_include_directories(wasapi_capture PRIVATE ${libsamplerate_SOURCE_DIR}/src)
+
 
 # Link required Windows libraries
 target_link_libraries(wasapi_capture
