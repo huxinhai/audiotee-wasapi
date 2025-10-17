@@ -20,7 +20,7 @@ add_executable(wasapi_capture src/wasapi_capture.cpp)
 target_link_libraries(wasapi_capture
     ole32
     psapi
-    samplerate
+    samplerate_static  
 )
 
 # Set output directory
