@@ -168,6 +168,7 @@ private:
     int inputRate = 0;
     int outputRate = 0;
     int channels = 0;
+    int bitsPerSample = 0;
     std::vector<float> inputBuffer;
     std::vector<float> outputBuffer;
     bool firstProcess = true; // 用于调试首次处理
@@ -182,10 +183,11 @@ public:
         }
     }
 
-    bool Initialize(int inRate, int outRate, int numChannels) {
+    bool Initialize(int inRate, int outRate, int numChannels, int bitsPerSample) {
         inputRate = inRate;
         outputRate = outRate;
         channels = numChannels;
+        this->bitsPerSample = bitsPerSample;
 
         int error = 0;
         // 使用最高质量的转换器避免失真
@@ -201,8 +203,8 @@ public:
 
         double ratio = (double)outRate / inRate;
         std::cerr << "Resampler initialized successfully:" << std::endl;
-        std::cerr << "  Input:  " << inRate << " Hz, " << channels << " channels" << std::endl;
-        std::cerr << "  Output: " << outRate << " Hz, " << channels << " channels" << std::endl;
+        std::cerr << "  Input:  " << inRate << " Hz, " << channels << " channels, " << bitsPerSample << " bits" << std::endl;
+        std::cerr << "  Output: " << outRate << " Hz, " << channels << " channels, " << bitsPerSample << " bits" << std::endl;
         std::cerr << "  Ratio:  " << ratio << " (using SRC_SINC_BEST_QUALITY)" << std::endl;
         
         if (ratio < 0.1 || ratio > 10.0) {
@@ -619,7 +621,7 @@ public:
                 std::cerr << "Device does not natively support " << requestedSampleRate
                     << "Hz, will use resampling" << std::endl;
 
-                if (!resampler.Initialize(deviceSampleRate, requestedSampleRate, pwfx->nChannels)) {
+                if (!resampler.Initialize(deviceSampleRate, requestedSampleRate, pwfx->nChannels, pwfx->wBitsPerSample)) {
                     std::cerr << "ERROR: Failed to initialize resampler" << std::endl;
                     return false;
                 }
