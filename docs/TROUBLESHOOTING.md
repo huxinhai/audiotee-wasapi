@@ -140,10 +140,42 @@ If still having issues, try:
    - 查看构建日志中的 "Fetching libsamplerate" 消息
    - Look for "Fetching libsamplerate" message in build logs
 
-3. 使用稳定版本标签 / Use stable version tag:
+3. 使用 master 分支获得最新修复 / Use master branch for latest fixes:
    ```cmake
-   GIT_TAG 0.2.2  # Instead of master
+   GIT_TAG master  # Latest version with CMake compatibility
    ```
+
+### 问题 2.6: CMake 版本兼容性错误 / CMake Version Compatibility Error
+
+**错误信息 / Error Message:**
+```
+CMake Error: Compatibility with CMake < 3.5 has been removed from CMake.
+```
+
+**原因 / Cause:**
+旧版本的 libsamplerate CMakeLists.txt 与新版 CMake 不兼容。
+
+Old version of libsamplerate CMakeLists.txt is incompatible with newer CMake.
+
+**解决方案 / Solution:**
+
+使用 master 分支并设置 CMake 策略：
+
+Use master branch and set CMake policy:
+
+```cmake
+# Fetch libsamplerate
+FetchContent_Declare(
+  libsamplerate
+  GIT_REPOSITORY https://github.com/libsndfile/libsamplerate.git
+  GIT_TAG master  # Use latest for CMake compatibility
+)
+
+# Set policy for compatibility
+set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
+
+FetchContent_MakeAvailable(libsamplerate)
+```
 
 ### 问题 3: 找不到源文件 / Source File Not Found
 

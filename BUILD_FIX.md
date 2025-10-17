@@ -1,6 +1,8 @@
 # 构建修复说明 / Build Fix Notes
 
-## 🐛 问题 / Issue
+## 🐛 问题 / Issues
+
+### 问题 1: 找不到头文件 / Issue 1: Cannot find header file
 
 GitHub Actions 构建失败，错误信息：
 GitHub Actions build failed with error:
@@ -8,6 +10,18 @@ GitHub Actions build failed with error:
 ```
 error C1083: Cannot open include file: 'samplerate.h': No such file or directory
 ```
+
+### 问题 2: CMake 版本兼容性 / Issue 2: CMake version compatibility
+
+```
+CMake Error at build/_deps/libsamplerate-src/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.5 has been removed from CMake.
+```
+
+**原因 / Cause:**
+libsamplerate 0.2.2 版本的 CMakeLists.txt 要求的 CMake 版本与最新版本不兼容。
+
+libsamplerate 0.2.2's CMakeLists.txt requires an older CMake version incompatible with latest CMake.
 
 ## ✅ 修复 / Fix
 
@@ -47,10 +61,16 @@ target_link_libraries(wasapi_capture PRIVATE
 2. ✅ 添加了 `${libsamplerate_BINARY_DIR}` 路径（生成的头文件）
    Added `${libsamplerate_BINARY_DIR}` path (generated headers)
    
-3. ✅ 使用稳定版本标签 `0.2.2` 替代 `master`
-   Used stable version tag `0.2.2` instead of `master`
+3. ✅ 使用 `master` 分支以获得最新的 CMake 兼容性修复
+   Used `master` branch for latest CMake compatibility fixes
    
-4. ✅ 库名称从 `samplerate_static` 改为 `samplerate`
+4. ✅ 设置 CMake 策略以确保兼容性
+   Set CMake policy for compatibility
+   ```cmake
+   set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
+   ```
+   
+5. ✅ 库名称从 `samplerate_static` 改为 `samplerate`
    Changed library name from `samplerate_static` to `samplerate`
 
 ### 2. GitHub Actions 工作流改进 / Workflow Improvements

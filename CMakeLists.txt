@@ -12,8 +12,11 @@ include(FetchContent)
 FetchContent_Declare(
   libsamplerate
   GIT_REPOSITORY https://github.com/libsndfile/libsamplerate.git
-  GIT_TAG 0.2.2  # Use stable release instead of master
+  GIT_TAG master  # Use latest master branch for CMake compatibility
 )
+
+# Set policy for libsamplerate compatibility
+set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
 
 # Make libsamplerate available
 FetchContent_MakeAvailable(libsamplerate)
