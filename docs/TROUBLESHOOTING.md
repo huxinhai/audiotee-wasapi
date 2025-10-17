@@ -99,6 +99,52 @@ CMake Error: Could not find Visual Studio
 - Ensure GitHub Actions uses `windows-latest`
 - Workflow file is configured with correct Visual Studio version
 
+### 问题 2.5: 构建失败 - 找不到 samplerate.h / Build Failed - Cannot find samplerate.h
+
+**错误信息 / Error Message:**
+```
+error C1083: Cannot open include file: 'samplerate.h': No such file or directory
+```
+
+**原因 / Cause:**
+libsamplerate 的 include 路径没有正确配置。
+
+**解决方案 / Solution:**
+
+已在 CMakeLists.txt 中修复。确保包含以下配置：
+
+Fixed in CMakeLists.txt. Ensure it includes:
+
+```cmake
+# Include directories - libsamplerate headers
+target_include_directories(wasapi_capture PRIVATE 
+    ${libsamplerate_SOURCE_DIR}/include
+    ${libsamplerate_SOURCE_DIR}/src
+    ${libsamplerate_BINARY_DIR}
+)
+```
+
+如果仍有问题，尝试：
+
+If still having issues, try:
+
+1. 清理构建目录 / Clean build directory:
+   ```bash
+   rm -rf build
+   mkdir build
+   cd build
+   cmake ..
+   ```
+
+2. 检查 FetchContent 是否成功 / Check if FetchContent succeeded:
+   - 查看构建日志中的 "Fetching libsamplerate" 消息
+   - Look for "Fetching libsamplerate" message in build logs
+
+3. 使用稳定版本标签 / Use stable version tag:
+   ```cmake
+   GIT_TAG 0.2.2  # Instead of master
+   ```
+
 ### 问题 3: 找不到源文件 / Source File Not Found
 
 **错误信息 / Error Message:**

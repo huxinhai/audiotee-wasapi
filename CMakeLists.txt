@@ -4,13 +4,35 @@ project(WASAPICapture)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+include(FetchContent)
+
+# Fetch libsamplerate
+FetchContent_Declare(
+  libsamplerate
+  GIT_REPOSITORY https://github.com/libsndfile/libsamplerate.git
+  GIT_TAG 0.2.2  # Use stable release instead of master
+)
+
+# Make libsamplerate available
+FetchContent_MakeAvailable(libsamplerate)
+
 # Add executable
 add_executable(wasapi_capture src/wasapi_capture.cpp)
 
-# Link required Windows libraries
-target_link_libraries(wasapi_capture
+# Include directories - libsamplerate headers
+target_include_directories(wasapi_capture PRIVATE 
+    ${libsamplerate_SOURCE_DIR}/include
+    ${libsamplerate_SOURCE_DIR}/src
+    ${libsamplerate_BINARY_DIR}
+)
+
+# Link required Windows libraries and libsamplerate
+target_link_libraries(wasapi_capture PRIVATE
     ole32
     psapi
+    samplerate
 )
 
 # Set output directory

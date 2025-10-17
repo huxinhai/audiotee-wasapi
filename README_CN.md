@@ -7,7 +7,8 @@
 ## 功能特性
 
 - ✅ 捕获系统音频（所有正在播放的声音）
-- ✅ 支持自定义采样率（8000 - 192000 Hz）
+- ✅ 支持自定义采样率（8000 - 192000 Hz），具备高质量自动重采样
+- ✅ 使用 libsamplerate 进行自动采样率转换
 - ✅ 支持自定义缓冲区大小
 - ✅ 事件驱动模式（无丢帧）和轮询模式
 - ✅ 输出原始 PCM 音频数据到标准输出
@@ -142,10 +143,13 @@ wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 output.wav
 wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 -b:a 192k output.mp3
 ```
 
-#### 示例 4：指定采样率
+#### 示例 4：指定采样率（自动重采样）
 ```batch
-# 强制使用 44100 Hz 采样率
+# 强制使用 44100 Hz 采样率（如果设备不支持会自动使用高质量重采样）
 wasapi_capture.exe --sample-rate 44100 > output.pcm
+
+# 程序会自动将设备原生采样率转换为你请求的采样率
+# 例如：设备运行在 48000 Hz，你请求 44100 Hz -> 自动重采样
 ```
 
 #### 示例 5：调整缓冲区大小
@@ -166,17 +170,25 @@ wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 -c:a flac o
 
 程序输出的是**原始 PCM 音频数据**（无文件头），格式信息：
 - **格式**: 小端序（Little-Endian）带符号 16 位整数
-- **采样率**: 默认使用设备采样率（通常为 48000 Hz 或 44100 Hz）
+- **采样率**: 使用设备默认值或你指定的采样率（通常为 48000 Hz 或 44100 Hz）
 - **声道数**: 取决于系统设备（通常为 2 声道立体声）
 
 运行程序时，会在错误输出（stderr）中显示实际使用的音频格式，例如：
 ```
-Final format: 48000Hz, 2 channels, 16 bits
+Device format: 48000Hz, 2 channels, 16 bits
+Requesting sample rate: 44100Hz
+Resampler ready: 48000Hz -> 44100Hz
+Final format: 44100Hz, 2 channels, 16 bits
 ```
 
-在使用 FFmpeg 时，需要根据这些参数进行配置：
+**自动重采样功能：**
+- 如果你指定的采样率与设备原生采样率不同，程序会自动使用高质量重采样（libsamplerate）
+- 重采样器使用 `SRC_SINC_MEDIUM_QUALITY` 算法，在保证优秀质量的同时具有合理的 CPU 占用
+- 重采样过程是透明的，输出将使用你请求的采样率
+
+在使用 FFmpeg 时，需要根据你**请求的采样率**进行配置：
 - `-f s16le`: 16 位小端序 PCM
-- `-ar 48000`: 采样率 48000 Hz
+- `-ar 44100`: 采样率（使用你请求的采样率）
 - `-ac 2`: 2 声道
 
 ## 常见问题
@@ -217,10 +229,13 @@ Final format: 48000Hz, 2 channels, 16 bits
 3. 进入"高级"选项卡
 4. 取消勾选"允许应用程序独占控制此设备"
 
-### 5. 运行时错误："Unsupported format"
+### 5. 运行时错误："Unsupported format"（启用重采样后很少见）
+
+**注意：** 由于程序支持自动重采样，此错误现在很少出现！
 
 **解决方案：**
-- 不使用 `--sample-rate` 参数（使用设备默认值）
+- 程序会自动重采样，即使设备不原生支持你请求的采样率
+- 如果仍然出现此错误，尝试不使用 `--sample-rate` 参数（使用设备默认值）
 - 尝试常用采样率：`--sample-rate 44100` 或 `--sample-rate 48000`
 - 更新音频驱动程序
 
@@ -326,8 +341,13 @@ audiotee-wasapi/
 ```
 
 ### 依赖库
+
+**运行时依赖：**
 - `ole32.lib` - COM 库
 - `psapi.lib` - 进程状态 API
+- `libsamplerate` - 高质量音频重采样库（通过 CMake 自动下载）
+
+**注意：** libsamplerate 会在编译时由 CMake 自动获取和构建，无需手动安装！
 
 ### 编译要求
 - C++17 标准
@@ -363,7 +383,9 @@ audiotee-wasapi/
 
 ### v1.0
 - ✅ 实现基本的 WASAPI 音频捕获功能
-- ✅ 支持自定义采样率和缓冲区大小
+- ✅ 支持自定义采样率，具备自动高质量重采样功能
+- ✅ 集成 libsamplerate 进行采样率转换
+- ✅ 支持自定义缓冲区大小
 - ✅ 事件驱动和轮询两种模式
 - ✅ 详细的错误诊断系统
 - ✅ 支持原始 PCM 输出到标准输出

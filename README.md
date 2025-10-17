@@ -7,7 +7,8 @@ A Windows system audio capture tool based on WASAPI (Windows Audio Session API) 
 ## Features
 
 - ✅ Capture system audio (all playing sounds)
-- ✅ Support custom sample rates (8000 - 192000 Hz)
+- ✅ Support custom sample rates (8000 - 192000 Hz) with automatic high-quality resampling
+- ✅ Automatic sample rate conversion using libsamplerate
 - ✅ Support custom buffer sizes
 - ✅ Event-driven mode (no frame drops) and polling mode
 - ✅ Output raw PCM audio data to stdout
@@ -142,10 +143,13 @@ wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 output.wav
 wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 -b:a 192k output.mp3
 ```
 
-#### Example 4: Specify Sample Rate
+#### Example 4: Specify Sample Rate (with Automatic Resampling)
 ```batch
-# Force 44100 Hz sample rate
+# Force 44100 Hz sample rate (will use high-quality resampling if device doesn't support it)
 wasapi_capture.exe --sample-rate 44100 > output.pcm
+
+# The program will automatically resample from device's native rate to your requested rate
+# Example: Device runs at 48000 Hz, you request 44100 Hz -> automatic resampling
 ```
 
 #### Example 5: Adjust Buffer Size
@@ -166,17 +170,25 @@ wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 -c:a flac o
 
 The program outputs **raw PCM audio data** (no file header) with the following format:
 - **Format**: Little-Endian signed 16-bit integers
-- **Sample Rate**: Uses device default (typically 48000 Hz or 44100 Hz)
+- **Sample Rate**: Uses device default or your specified rate (typically 48000 Hz or 44100 Hz)
 - **Channels**: Depends on system device (typically 2-channel stereo)
 
 When running the program, the actual audio format will be displayed in error output (stderr), for example:
 ```
-Final format: 48000Hz, 2 channels, 16 bits
+Device format: 48000Hz, 2 channels, 16 bits
+Requesting sample rate: 44100Hz
+Resampler ready: 48000Hz -> 44100Hz
+Final format: 44100Hz, 2 channels, 16 bits
 ```
 
-When using FFmpeg, configure parameters based on these values:
+**Automatic Resampling:**
+- If you specify a sample rate different from the device's native rate, the program automatically uses high-quality resampling (libsamplerate)
+- The resampler uses `SRC_SINC_MEDIUM_QUALITY` algorithm, providing excellent quality with reasonable CPU usage
+- Resampling is transparent - the output will be at your requested sample rate
+
+When using FFmpeg, configure parameters based on your **requested** sample rate:
 - `-f s16le`: 16-bit little-endian PCM
-- `-ar 48000`: Sample rate 48000 Hz
+- `-ar 44100`: Sample rate (use your requested rate)
 - `-ac 2`: 2 channels
 
 ## Troubleshooting
@@ -217,10 +229,13 @@ When using FFmpeg, configure parameters based on these values:
 3. Go to "Advanced" tab
 4. Uncheck "Allow applications to take exclusive control of this device"
 
-### 5. Runtime Error: "Unsupported format"
+### 5. Runtime Error: "Unsupported format" (Rare with resampling)
+
+**Note:** This error is now rare because the program supports automatic resampling!
 
 **Solutions:**
-- Don't use `--sample-rate` parameter (use device default)
+- The program will automatically resample if the device doesn't natively support your requested rate
+- If you still get this error, try using device default (no `--sample-rate` parameter)
 - Try common sample rates: `--sample-rate 44100` or `--sample-rate 48000`
 - Update audio drivers
 
@@ -324,8 +339,13 @@ audiotee-wasapi/
 ```
 
 ### Dependencies
+
+**Runtime Dependencies:**
 - `ole32.lib` - COM library
 - `psapi.lib` - Process Status API
+- `libsamplerate` - High-quality audio resampling library (automatically downloaded via CMake)
+
+**Note:** libsamplerate is automatically fetched and built by CMake during compilation. No manual installation required!
 
 ### Build Requirements
 - C++17 standard
@@ -361,7 +381,9 @@ Issues and Pull Requests are welcome!
 
 ### v1.0
 - ✅ Implemented basic WASAPI audio capture functionality
-- ✅ Support for custom sample rates and buffer sizes
+- ✅ Support for custom sample rates with automatic high-quality resampling
+- ✅ Integrated libsamplerate for sample rate conversion
+- ✅ Support for custom buffer sizes
 - ✅ Event-driven and polling modes
 - ✅ Detailed error diagnostic system
 - ✅ Raw PCM output to stdout
