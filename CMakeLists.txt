@@ -4,62 +4,59 @@ project(WASAPICapture)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Force static libraries
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
-include(FetchContent)
+# Check for local libsamplerate source
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libsamplerate/CMakeLists.txt")
+    message(STATUS "")
+    message(STATUS "========================================")
+    message(STATUS "  Using LOCAL libsamplerate source")
+    message(STATUS "========================================")
+    add_subdirectory(third_party/libsamplerate)
+    set(LIBSAMPLERATE_FOUND TRUE)
+    set(LIBSAMPLERATE_INCLUDE_DIRS 
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libsamplerate/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libsamplerate/src
+        ${CMAKE_BINARY_DIR}/third_party/libsamplerate
+    )
+else()
+    message(FATAL_ERROR "
+╔════════════════════════════════════════════════════════════════╗
+║  ERROR: libsamplerate source not found!                        ║
+╚════════════════════════════════════════════════════════════════╝
 
-# Set policy for libsamplerate compatibility
-set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
+Please download and extract libsamplerate:
 
-# Fetch libsamplerate
-FetchContent_Declare(
-  libsamplerate
-  GIT_REPOSITORY https://github.com/libsndfile/libsamplerate.git
-  GIT_TAG master  # Use latest master branch for CMake compatibility
-)
+1. Download from:
+   https://github.com/libsndfile/libsamplerate/releases/download/0.2.2/libsamplerate-0.2.2.tar.xz
 
-# Make libsamplerate available
-FetchContent_MakeAvailable(libsamplerate)
+2. Extract to:
+   third_party/libsamplerate/
 
-# Print available targets for debugging
-get_directory_property(all_targets BUILDSYSTEM_TARGETS)
-message(STATUS "Available targets: ${all_targets}")
+3. Directory structure should be:
+   third_party/libsamplerate/
+   ├── CMakeLists.txt
+   ├── include/
+   ├── src/
+   └── ...
+
+See SETUP_LIBSAMPLERATE.md for detailed instructions.
+")
+endif()
 
 # Add executable
 add_executable(wasapi_capture src/wasapi_capture.cpp)
 
-# Include directories - libsamplerate headers
-target_include_directories(wasapi_capture PRIVATE 
-    ${libsamplerate_SOURCE_DIR}/include
-    ${libsamplerate_SOURCE_DIR}/src
-    ${libsamplerate_BINARY_DIR}
+# Include directories
+target_include_directories(wasapi_capture PRIVATE ${LIBSAMPLERATE_INCLUDE_DIRS})
+
+# Link libraries - use the target created by libsamplerate's CMakeLists.txt
+target_link_libraries(wasapi_capture PRIVATE
+    ole32
+    psapi
+    samplerate
 )
-
-# Add library search paths
-link_directories(${libsamplerate_BINARY_DIR}/src)
-link_directories(${libsamplerate_BINARY_DIR}/src/Release)
-link_directories(${libsamplerate_BINARY_DIR}/src/Debug)
-
-# Link required Windows libraries and libsamplerate
-# Debug: check which targets exist
-if(TARGET samplerate)
-    message(STATUS "✓ Found CMake target: 'samplerate'")
-    target_link_libraries(wasapi_capture PRIVATE ole32 psapi samplerate)
-elseif(TARGET libsamplerate)
-    message(STATUS "✓ Found CMake target: 'libsamplerate'")
-    target_link_libraries(wasapi_capture PRIVATE ole32 psapi libsamplerate)
-elseif(TARGET SampleRate::samplerate)
-    message(STATUS "✓ Found CMake target: 'SampleRate::samplerate'")
-    target_link_libraries(wasapi_capture PRIVATE ole32 psapi SampleRate::samplerate)
-else()
-    message(STATUS "⚠ No CMake target found, linking by library name")
-    message(STATUS "  Library search paths: ${libsamplerate_BINARY_DIR}/src")
-    target_link_libraries(wasapi_capture PRIVATE
-        ole32
-        psapi
-        samplerate
-    )
-endif()
 
 # Set output directory
 set_target_properties(wasapi_capture PROPERTIES

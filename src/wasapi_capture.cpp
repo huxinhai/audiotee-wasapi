@@ -19,7 +19,6 @@
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "psapi.lib")
-#pragma comment(lib, "libsamplerate-0.lib")
 
 // Safe release macro
 template <class T> void SafeRelease(T** ppT) {

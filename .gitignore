@@ -1,7 +1,13 @@
 # Build directories
 build/
+build_test/
 bin/
 obj/
+
+# Downloaded archives (but keep extracted source)
+*.tar.xz
+*.tar.gz
+*.zip
 
 # Compiled executables
 *.exe
