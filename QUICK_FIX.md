@@ -2,9 +2,15 @@
 
 ## 🚨 当前状态 / Current Status
 
-GitHub Actions 构建遇到 CMake 版本兼容性问题。
+GitHub Actions 构建遇到链接器错误：找不到 `libsamplerate-0.lib`
 
-GitHub Actions build encountered CMake version compatibility issue.
+GitHub Actions build encountered linker error: Cannot find `libsamplerate-0.lib`
+
+### 进展 / Progress
+- ✅ CMake 配置成功 / CMake configuration successful
+- ✅ 头文件找到 / Header files found
+- ✅ 编译成功 / Compilation successful
+- ❌ 链接失败 / Linking failed
 
 ## ✅ 已应用的修复 / Applied Fixes
 
@@ -24,20 +30,24 @@ target_include_directories(wasapi_capture PRIVATE
     ${libsamplerate_BINARY_DIR}
 )
 
-# 正确的库名称
-target_link_libraries(wasapi_capture PRIVATE
-    ole32
-    psapi
-    samplerate  # Not samplerate_static
-)
+# 正确的库名称和链接方法
+# 检查多个可能的目标名称
+if(TARGET samplerate)
+    target_link_libraries(wasapi_capture PRIVATE ole32 psapi samplerate)
+elseif(TARGET libsamplerate)
+    target_link_libraries(wasapi_capture PRIVATE ole32 psapi libsamplerate)
+else()
+    link_directories(${libsamplerate_BINARY_DIR}/src)
+    target_link_libraries(wasapi_capture PRIVATE ole32 psapi samplerate)
+endif()
 ```
 
 ## 📦 立即执行 / Execute Now
 
 ```bash
 # 1. 提交修复
-git add CMakeLists.txt BUILD_FIX.md docs/TROUBLESHOOTING.md QUICK_FIX.md
-git commit -m "Fix libsamplerate CMake compatibility issue
+git add CMakeLists.txt BUILD_FIX.md docs/TROUBLESHOOTING.md QUICK_FIX.md test_build.bat
+git commit -m "Fix libsamplerate linking issue and CMake compatibility
 
 - Use master branch for latest CMake compatibility
 - Set CMAKE_POLICY_DEFAULT_CMP0048 to NEW

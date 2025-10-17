@@ -8,6 +8,9 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 include(FetchContent)
 
+# Set policy for libsamplerate compatibility
+set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
+
 # Fetch libsamplerate
 FetchContent_Declare(
   libsamplerate
@@ -15,11 +18,12 @@ FetchContent_Declare(
   GIT_TAG master  # Use latest master branch for CMake compatibility
 )
 
-# Set policy for libsamplerate compatibility
-set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
-
 # Make libsamplerate available
 FetchContent_MakeAvailable(libsamplerate)
+
+# Print available targets for debugging
+get_directory_property(all_targets BUILDSYSTEM_TARGETS)
+message(STATUS "Available targets: ${all_targets}")
 
 # Add executable
 add_executable(wasapi_capture src/wasapi_capture.cpp)
@@ -31,12 +35,31 @@ target_include_directories(wasapi_capture PRIVATE
     ${libsamplerate_BINARY_DIR}
 )
 
+# Add library search paths
+link_directories(${libsamplerate_BINARY_DIR}/src)
+link_directories(${libsamplerate_BINARY_DIR}/src/Release)
+link_directories(${libsamplerate_BINARY_DIR}/src/Debug)
+
 # Link required Windows libraries and libsamplerate
-target_link_libraries(wasapi_capture PRIVATE
-    ole32
-    psapi
-    samplerate
-)
+# Debug: check which targets exist
+if(TARGET samplerate)
+    message(STATUS "✓ Found CMake target: 'samplerate'")
+    target_link_libraries(wasapi_capture PRIVATE ole32 psapi samplerate)
+elseif(TARGET libsamplerate)
+    message(STATUS "✓ Found CMake target: 'libsamplerate'")
+    target_link_libraries(wasapi_capture PRIVATE ole32 psapi libsamplerate)
+elseif(TARGET SampleRate::samplerate)
+    message(STATUS "✓ Found CMake target: 'SampleRate::samplerate'")
+    target_link_libraries(wasapi_capture PRIVATE ole32 psapi SampleRate::samplerate)
+else()
+    message(STATUS "⚠ No CMake target found, linking by library name")
+    message(STATUS "  Library search paths: ${libsamplerate_BINARY_DIR}/src")
+    target_link_libraries(wasapi_capture PRIVATE
+        ole32
+        psapi
+        samplerate
+    )
+endif()
 
 # Set output directory
 set_target_properties(wasapi_capture PROPERTIES
