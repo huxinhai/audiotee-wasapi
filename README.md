@@ -7,12 +7,12 @@ A Windows system audio capture tool based on WASAPI (Windows Audio Session API) 
 ## Features
 
 - ✅ Capture system audio (all playing sounds)
-- ✅ Support custom sample rates (8000 - 192000 Hz)
 - ✅ Support custom buffer sizes
 - ✅ Event-driven mode (no frame drops) and polling mode
 - ✅ Output raw PCM audio data to stdout
 - ✅ Detailed error diagnostics and solutions
 - ✅ Support Ctrl+C graceful exit
+- 📝 Support custom sample rates (8000 - 192000 Hz)
 - 📝 Mute mode (not yet implemented)
 - 📝 Process filtering (not yet implemented)
 
