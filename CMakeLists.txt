@@ -4,6 +4,15 @@ project(WASAPICapture)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(FetchContent)
+
+FetchContent_Declare(
+  libsamplerate
+  GIT_REPOSITORY https://github.com/libsndfile/libsamplerate.git
+  GIT_TAG master
+)
+FetchContent_MakeAvailable(libsamplerate)
+
 # Add executable
 add_executable(wasapi_capture src/wasapi_capture.cpp)
 
@@ -11,6 +20,7 @@ add_executable(wasapi_capture src/wasapi_capture.cpp)
 target_link_libraries(wasapi_capture
     ole32
     psapi
+    samplerate
 )
 
 # Set output directory
