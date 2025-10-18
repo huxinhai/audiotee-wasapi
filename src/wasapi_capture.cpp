@@ -557,20 +557,22 @@ public:
             std::cerr << "  Output: " << targetSampleRate << "Hz, " 
                       << targetChannels << " channels, " << targetBitDepth << " bits" << std::endl;
 
-            // Create output format
+            // Create output format as standard PCM
             pOutputFormat = (WAVEFORMATEX*)CoTaskMemAlloc(sizeof(WAVEFORMATEX));
             if (!pOutputFormat) {
                 std::cerr << "Failed to allocate memory for output format" << std::endl;
                 return false;
             }
 
-            // Copy input format and modify
-            memcpy(pOutputFormat, pwfx, sizeof(WAVEFORMATEX));
-            pOutputFormat->nSamplesPerSec = targetSampleRate;
+            // Set up as standard PCM format (not extensible)
+            ZeroMemory(pOutputFormat, sizeof(WAVEFORMATEX));
+            pOutputFormat->wFormatTag = WAVE_FORMAT_PCM;
             pOutputFormat->nChannels = targetChannels;
+            pOutputFormat->nSamplesPerSec = targetSampleRate;
             pOutputFormat->wBitsPerSample = targetBitDepth;
             pOutputFormat->nBlockAlign = (targetChannels * targetBitDepth) / 8;
             pOutputFormat->nAvgBytesPerSec = targetSampleRate * pOutputFormat->nBlockAlign;
+            pOutputFormat->cbSize = 0;  // No extra data for standard PCM
 
             // Initialize resampler
             resampler = std::make_unique<AudioResampler>();
