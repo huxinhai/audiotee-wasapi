@@ -11,6 +11,9 @@ add_executable(wasapi_capture src/wasapi_capture.cpp)
 target_link_libraries(wasapi_capture
     ole32
     psapi
+    mf
+    mfplat
+    mfreadwrite
 )
 
 # Set output directory
