@@ -337,8 +337,12 @@ public:
         
         HRESULT hr;
         
-        // First, try to get any pending output
-        bool hasOutput = TryGetOutput(outputData);
+        // First, try to drain all available output
+        std::vector<BYTE> tempOutput;
+        while (TryGetOutput(tempOutput)) {
+            outputData.insert(outputData.end(), tempOutput.begin(), tempOutput.end());
+            tempOutput.clear();
+        }
         
         // Now try to feed input
         IMFSample* pSample = nullptr;
@@ -346,12 +350,12 @@ public:
         
         // Create input sample and buffer
         hr = MFCreateSample(&pSample);
-        if (FAILED(hr)) return hasOutput;
+        if (FAILED(hr)) return !outputData.empty();
         
         hr = MFCreateMemoryBuffer(inputSize, &pBuffer);
         if (FAILED(hr)) {
             SafeRelease(&pSample);
-            return hasOutput;
+            return !outputData.empty();
         }
         
         // Copy input data
@@ -360,7 +364,7 @@ public:
         if (FAILED(hr)) {
             SafeRelease(&pBuffer);
             SafeRelease(&pSample);
-            return hasOutput;
+            return !outputData.empty();
         }
         
         memcpy(pBufferData, inputData, inputSize);
@@ -375,20 +379,15 @@ public:
         hr = pResampler->ProcessInput(0, pSample, 0);
         SafeRelease(&pSample);
         
-        if (FAILED(hr)) {
-            if (hr == MF_E_NOTACCEPTING) {
-                // Resampler buffer is full, try to get output again
-                if (!hasOutput) {
-                    TryGetOutput(outputData);
-                }
-            }
-            // Return true even if input failed, as long as we got some output
-            return true;
+        if (FAILED(hr) && hr != MF_E_NOTACCEPTING) {
+            // Unexpected error
+            return !outputData.empty();
         }
         
-        // Try to get output after feeding input
-        if (!hasOutput) {
-            TryGetOutput(outputData);
+        // Try to get more output after feeding input
+        while (TryGetOutput(tempOutput)) {
+            outputData.insert(outputData.end(), tempOutput.begin(), tempOutput.end());
+            tempOutput.clear();
         }
         
         return true;
@@ -440,6 +439,21 @@ private:
         } else {
             SafeRelease(&outputBuffer.pSample);
             return false;
+        }
+    }
+    
+    // Flush remaining data from resampler
+    void Flush(std::vector<BYTE>& outputData) {
+        if (!initialized) return;
+        
+        // Send drain message
+        pResampler->ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0);
+        
+        // Get all remaining output
+        std::vector<BYTE> tempOutput;
+        while (TryGetOutput(tempOutput)) {
+            outputData.insert(outputData.end(), tempOutput.begin(), tempOutput.end());
+            tempOutput.clear();
         }
     }
     
@@ -820,6 +834,17 @@ public:
         }
 
         pAudioClient->Stop();
+        
+        // Flush resampler if needed
+        if (needsResampling && resampler) {
+            std::vector<BYTE> finalData;
+            resampler->Flush(finalData);
+            if (!finalData.empty()) {
+                std::cout.write(reinterpret_cast<char*>(finalData.data()), finalData.size());
+                std::cout.flush();
+            }
+        }
+        
         CloseHandle(hEvent);
     }
 
@@ -901,6 +926,16 @@ public:
         }
 
         pAudioClient->Stop();
+        
+        // Flush resampler if needed
+        if (needsResampling && resampler) {
+            std::vector<BYTE> finalData;
+            resampler->Flush(finalData);
+            if (!finalData.empty()) {
+                std::cout.write(reinterpret_cast<char*>(finalData.data()), finalData.size());
+                std::cout.flush();
+            }
+        }
     }
 
     void Stop() {
