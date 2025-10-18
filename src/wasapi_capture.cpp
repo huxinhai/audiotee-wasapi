@@ -442,6 +442,8 @@ private:
         }
     }
     
+public:
+    
     // Flush remaining data from resampler
     void Flush(std::vector<BYTE>& outputData) {
         if (!initialized) return;
@@ -456,8 +458,6 @@ private:
             tempOutput.clear();
         }
     }
-    
-public:
     
     void Cleanup() {
         SafeRelease(&pOutputBuffer);
