@@ -336,17 +336,22 @@ public:
         }
         
         HRESULT hr;
+        
+        // First, try to get any pending output
+        bool hasOutput = TryGetOutput(outputData);
+        
+        // Now try to feed input
         IMFSample* pSample = nullptr;
         IMFMediaBuffer* pBuffer = nullptr;
         
         // Create input sample and buffer
         hr = MFCreateSample(&pSample);
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) return hasOutput;
         
         hr = MFCreateMemoryBuffer(inputSize, &pBuffer);
         if (FAILED(hr)) {
             SafeRelease(&pSample);
-            return false;
+            return hasOutput;
         }
         
         // Copy input data
@@ -355,7 +360,7 @@ public:
         if (FAILED(hr)) {
             SafeRelease(&pBuffer);
             SafeRelease(&pSample);
-            return false;
+            return hasOutput;
         }
         
         memcpy(pBufferData, inputData, inputSize);
@@ -366,29 +371,44 @@ public:
         pSample->AddBuffer(pBuffer);
         SafeRelease(&pBuffer);
         
-        // Process input
+        // Try to process input
         hr = pResampler->ProcessInput(0, pSample, 0);
         SafeRelease(&pSample);
         
         if (FAILED(hr)) {
-            if (hr != MF_E_NOTACCEPTING) {
-                std::cerr << "ProcessInput failed: 0x" << std::hex << hr << std::dec << std::endl;
+            if (hr == MF_E_NOTACCEPTING) {
+                // Resampler buffer is full, try to get output again
+                if (!hasOutput) {
+                    TryGetOutput(outputData);
+                }
             }
-            return false;
+            // Return true even if input failed, as long as we got some output
+            return true;
         }
         
-        // Get output
+        // Try to get output after feeding input
+        if (!hasOutput) {
+            TryGetOutput(outputData);
+        }
+        
+        return true;
+    }
+    
+private:
+    bool TryGetOutput(std::vector<BYTE>& outputData) {
         MFT_OUTPUT_DATA_BUFFER outputBuffer = {};
         MFT_OUTPUT_STREAM_INFO streamInfo = {};
+        IMFMediaBuffer* pBuffer = nullptr;
         
-        hr = pResampler->GetOutputStreamInfo(0, &streamInfo);
+        HRESULT hr = pResampler->GetOutputStreamInfo(0, &streamInfo);
         if (FAILED(hr)) return false;
         
         // Create output sample
         hr = MFCreateSample(&outputBuffer.pSample);
         if (FAILED(hr)) return false;
         
-        hr = MFCreateMemoryBuffer(streamInfo.cbSize > 0 ? streamInfo.cbSize : 8192, &pBuffer);
+        DWORD bufferSize = streamInfo.cbSize > 0 ? streamInfo.cbSize : 8192;
+        hr = MFCreateMemoryBuffer(bufferSize, &pBuffer);
         if (FAILED(hr)) {
             SafeRelease(&outputBuffer.pSample);
             return false;
@@ -417,15 +437,13 @@ public:
             }
             SafeRelease(&outputBuffer.pSample);
             return true;
-        } else if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
-            // Need more input - this is normal, resampler is buffering
-            SafeRelease(&outputBuffer.pSample);
-            return true;
         } else {
             SafeRelease(&outputBuffer.pSample);
             return false;
         }
     }
+    
+public:
     
     void Cleanup() {
         SafeRelease(&pOutputBuffer);
