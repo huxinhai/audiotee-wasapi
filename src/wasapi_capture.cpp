@@ -232,51 +232,91 @@ public:
     
     bool Initialize(WAVEFORMATEX* inputFormat, WAVEFORMATEX* outputFormat) {
         if (!inputFormat || !outputFormat) {
+            std::cerr << "Error: Invalid input or output format pointer" << std::endl;
             return false;
         }
         
         pInputFormat = inputFormat;
         pOutputFormat = outputFormat;
         
+        std::cerr << "Creating audio resampler..." << std::endl;
         HRESULT hr = CoCreateInstance(CLSID_CResamplerMediaObject, nullptr, 
                                      CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pResampler));
         if (FAILED(hr)) {
-            std::cerr << "Failed to create resampler: 0x" << std::hex << hr << std::endl;
+            std::cerr << "Failed to create resampler COM object: 0x" << std::hex << hr << std::dec << std::endl;
             return false;
         }
+        std::cerr << "Resampler COM object created successfully" << std::endl;
         
         // Create input media type
         hr = MFCreateMediaType(&pInputType);
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            std::cerr << "Failed to create input media type: 0x" << std::hex << hr << std::dec << std::endl;
+            return false;
+        }
         
         hr = MFInitMediaTypeFromWaveFormatEx(pInputType, pInputFormat, sizeof(WAVEFORMATEX));
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            std::cerr << "Failed to init input media type from WAVEFORMATEX: 0x" << std::hex << hr << std::dec << std::endl;
+            return false;
+        }
+        std::cerr << "Input media type configured" << std::endl;
         
         // Create output media type
         hr = MFCreateMediaType(&pOutputType);
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            std::cerr << "Failed to create output media type: 0x" << std::hex << hr << std::dec << std::endl;
+            return false;
+        }
         
         hr = MFInitMediaTypeFromWaveFormatEx(pOutputType, pOutputFormat, sizeof(WAVEFORMATEX));
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            std::cerr << "Failed to init output media type from WAVEFORMATEX: 0x" << std::hex << hr << std::dec << std::endl;
+            return false;
+        }
+        std::cerr << "Output media type configured" << std::endl;
         
         // Set media types
+        std::cerr << "Setting input type on resampler..." << std::endl;
         hr = pResampler->SetInputType(0, pInputType, 0);
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            std::cerr << "Failed to set input type: 0x" << std::hex << hr << std::dec << std::endl;
+            std::cerr << "Input format: " << pInputFormat->nSamplesPerSec << "Hz, " 
+                      << pInputFormat->nChannels << "ch, " << pInputFormat->wBitsPerSample << "bit" << std::endl;
+            return false;
+        }
         
+        std::cerr << "Setting output type on resampler..." << std::endl;
         hr = pResampler->SetOutputType(0, pOutputType, 0);
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            std::cerr << "Failed to set output type: 0x" << std::hex << hr << std::dec << std::endl;
+            std::cerr << "Output format: " << pOutputFormat->nSamplesPerSec << "Hz, " 
+                      << pOutputFormat->nChannels << "ch, " << pOutputFormat->wBitsPerSample << "bit" << std::endl;
+            return false;
+        }
         
-        // Process input
+        // Process messages
+        std::cerr << "Sending control messages to resampler..." << std::endl;
         hr = pResampler->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            std::cerr << "Failed to send FLUSH message: 0x" << std::hex << hr << std::dec << std::endl;
+            return false;
+        }
         
         hr = pResampler->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            std::cerr << "Failed to send BEGIN_STREAMING message: 0x" << std::hex << hr << std::dec << std::endl;
+            return false;
+        }
         
         hr = pResampler->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            std::cerr << "Failed to send START_OF_STREAM message: 0x" << std::hex << hr << std::dec << std::endl;
+            return false;
+        }
         
         initialized = true;
+        std::cerr << "Audio resampler initialized successfully!" << std::endl;
         return true;
     }
     
