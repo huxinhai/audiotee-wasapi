@@ -7,7 +7,11 @@
 ## 功能特性
 
 - ✅ 捕获系统音频（所有正在播放的声音）
+- ✅ **实时音频格式转换**（采样率、声道数、位深）
 - ✅ 支持自定义采样率（8000 - 192000 Hz）
+- ✅ 支持自定义声道数（1=单声道，2=立体声）
+- ✅ 支持自定义位深（16/24/32 位）
+- ✅ 内置 Windows Media Foundation 重采样器（高质量）
 - ✅ 支持自定义缓冲区大小
 - ✅ 事件驱动模式（无丢帧）和轮询模式
 - ✅ 输出原始 PCM 音频数据到标准输出
@@ -116,7 +120,9 @@ wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 output.mp3
 
 | 参数 | 说明 | 示例 |
 |------|------|------|
-| `--sample-rate <Hz>` | 设置目标采样率（默认：使用设备默认值）| `--sample-rate 48000` |
+| `--sample-rate <Hz>` | 设置目标采样率（8000-192000 Hz，默认：使用设备默认值）| `--sample-rate 16000` |
+| `--channels <数量>` | 设置声道数（1=单声道，2=立体声，默认：使用设备默认值）| `--channels 1` |
+| `--bit-depth <位数>` | 设置位深（16/24/32，默认：使用设备默认值）| `--bit-depth 16` |
 | `--chunk-duration <秒>` | 设置音频块持续时间（默认：0.2 秒）| `--chunk-duration 0.1` |
 | `--mute` | 捕获时静音系统音频（暂未实现）| `--mute` |
 | `--include-processes <PID>` | 只捕获指定进程的音频（暂未实现）| `--include-processes 1234 5678` |
@@ -142,13 +148,25 @@ wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 output.wav
 wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 -b:a 192k output.mp3
 ```
 
-#### 示例 4：指定采样率
+#### 示例 4：音频格式转换（重采样 + 声道转换）
 ```batch
-# 强制使用 44100 Hz 采样率
-wasapi_capture.exe --sample-rate 44100 > output.pcm
+# 转换为 16kHz 单声道 16 位（适合语音识别）
+wasapi_capture.exe --sample-rate 16000 --channels 1 --bit-depth 16 > speech.pcm
+
+# 转换为 44.1kHz 立体声 16 位（CD 音质）
+wasapi_capture.exe --sample-rate 44100 --channels 2 --bit-depth 16 > music.pcm
+
+# 转换为 8kHz 单声道（电话音质，文件最小）
+wasapi_capture.exe --sample-rate 8000 --channels 1 --bit-depth 16 > phone.pcm
 ```
 
-#### 示例 5：调整缓冲区大小
+#### 示例 5：语音识别流水线
+```batch
+# 以最适合语音识别的格式捕获音频并通过管道传递给 FFmpeg
+wasapi_capture.exe --sample-rate 16000 --channels 1 --bit-depth 16 2>nul | ffmpeg -f s16le -ar 16000 -ac 1 -i pipe:0 speech.wav
+```
+
+#### 示例 6：调整缓冲区大小
 ```batch
 # 使用更小的缓冲区（降低延迟）
 wasapi_capture.exe --chunk-duration 0.05 > output.pcm
@@ -157,27 +175,48 @@ wasapi_capture.exe --chunk-duration 0.05 > output.pcm
 wasapi_capture.exe --chunk-duration 0.5 > output.pcm
 ```
 
-#### 示例 6：静默错误信息并转换为 FLAC
+#### 示例 7：静默错误信息并转换为 FLAC
 ```batch
 wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 -c:a flac output.flac
 ```
 
 ### 关于音频格式
 
-程序输出的是**原始 PCM 音频数据**（无文件头），格式信息：
-- **格式**: 小端序（Little-Endian）带符号 16 位整数
-- **采样率**: 默认使用设备采样率（通常为 48000 Hz 或 44100 Hz）
-- **声道数**: 取决于系统设备（通常为 2 声道立体声）
+程序输出的是**原始 PCM 音频数据**（无文件头）。输出格式可以通过命令行参数自定义：
 
-运行程序时，会在错误输出（stderr）中显示实际使用的音频格式，例如：
+**默认行为**（不指定格式参数）：
+- 使用设备的原生格式（通常为 48000 Hz，2 声道，32 位浮点）
+- 自动转换为 16 位 PCM 整数格式
+
+**自定义格式**（使用 `--sample-rate`、`--channels`、`--bit-depth`）：
+- **采样率**: 8000-192000 Hz（如 16000 用于语音，44100 用于音乐）
+- **声道数**: 1（单声道）或 2（立体声）
+- **位深**: 16/24/32 位（推荐 16 位以获得最佳兼容性）
+
+**格式转换：**
+程序使用 Windows Media Foundation 内置的重采样器进行高质量实时音频转换：
+- ✅ 自动格式检测（PCM/浮点）
+- ✅ 采样率转换（如 48000→16000 Hz）
+- ✅ 声道转换（如立体声→单声道）
+- ✅ 位深转换（如 32 位浮点→16 位 PCM）
+
+运行程序时，会显示输出格式：
 ```
-Final format: 48000Hz, 2 channels, 16 bits
+========================================
+输出音频格式：
+  采样率: 16000 Hz
+  声道数: 1
+  位深:   16 bits
+========================================
 ```
 
-在使用 FFmpeg 时，需要根据这些参数进行配置：
-- `-f s16le`: 16 位小端序 PCM
-- `-ar 48000`: 采样率 48000 Hz
-- `-ac 2`: 2 声道
+**FFmpeg 参数对照表：**
+| 输出格式 | FFmpeg 参数 |
+|---------|------------|
+| 16kHz, 单声道, 16位 | `-f s16le -ar 16000 -ac 1` |
+| 44.1kHz, 立体声, 16位 | `-f s16le -ar 44100 -ac 2` |
+| 48kHz, 立体声, 24位 | `-f s24le -ar 48000 -ac 2` |
+| 48kHz, 立体声, 32位 | `-f s32le -ar 48000 -ac 2` |
 
 ## 常见问题
 

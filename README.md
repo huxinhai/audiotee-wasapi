@@ -7,7 +7,11 @@ A Windows system audio capture tool based on WASAPI (Windows Audio Session API) 
 ## Features
 
 - ✅ Capture system audio (all playing sounds)
+- ✅ **Real-time audio format conversion** (sample rate, channels, bit depth)
 - ✅ Support custom sample rates (8000 - 192000 Hz)
+- ✅ Support custom channels (1=mono, 2=stereo)
+- ✅ Support custom bit depth (16/24/32 bits)
+- ✅ Built-in Windows Media Foundation resampler (high quality)
 - ✅ Support custom buffer sizes
 - ✅ Event-driven mode (no frame drops) and polling mode
 - ✅ Output raw PCM audio data to stdout
@@ -116,7 +120,9 @@ wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 output.mp3
 
 | Option | Description | Example |
 |--------|-------------|---------|
-| `--sample-rate <Hz>` | Set target sample rate (default: use device default) | `--sample-rate 48000` |
+| `--sample-rate <Hz>` | Set target sample rate (8000-192000 Hz, default: device default) | `--sample-rate 16000` |
+| `--channels <count>` | Set number of channels (1=mono, 2=stereo, default: device default) | `--channels 1` |
+| `--bit-depth <bits>` | Set bit depth (16/24/32, default: device default) | `--bit-depth 16` |
 | `--chunk-duration <seconds>` | Set audio chunk duration (default: 0.2 seconds) | `--chunk-duration 0.1` |
 | `--mute` | Mute system audio while capturing (not yet implemented) | `--mute` |
 | `--include-processes <PID>` | Only capture audio from specified process IDs (not yet implemented) | `--include-processes 1234 5678` |
@@ -142,13 +148,25 @@ wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 output.wav
 wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 -b:a 192k output.mp3
 ```
 
-#### Example 4: Specify Sample Rate
+#### Example 4: Convert Audio Format (Resample + Channel Conversion)
 ```batch
-# Force 44100 Hz sample rate
-wasapi_capture.exe --sample-rate 44100 > output.pcm
+# Convert to 16kHz mono 16-bit (ideal for speech recognition)
+wasapi_capture.exe --sample-rate 16000 --channels 1 --bit-depth 16 > speech.pcm
+
+# Convert to 44.1kHz stereo 16-bit (CD quality)
+wasapi_capture.exe --sample-rate 44100 --channels 2 --bit-depth 16 > music.pcm
+
+# Convert to 8kHz mono (telephone quality, smallest file size)
+wasapi_capture.exe --sample-rate 8000 --channels 1 --bit-depth 16 > phone.pcm
 ```
 
-#### Example 5: Adjust Buffer Size
+#### Example 5: Speech Recognition Pipeline
+```batch
+# Capture audio in optimal format for speech recognition and pipe to FFmpeg
+wasapi_capture.exe --sample-rate 16000 --channels 1 --bit-depth 16 2>nul | ffmpeg -f s16le -ar 16000 -ac 1 -i pipe:0 speech.wav
+```
+
+#### Example 6: Adjust Buffer Size
 ```batch
 # Use smaller buffer (lower latency)
 wasapi_capture.exe --chunk-duration 0.05 > output.pcm
@@ -157,27 +175,48 @@ wasapi_capture.exe --chunk-duration 0.05 > output.pcm
 wasapi_capture.exe --chunk-duration 0.5 > output.pcm
 ```
 
-#### Example 6: Silence Error Messages and Convert to FLAC
+#### Example 7: Silence Error Messages and Convert to FLAC
 ```batch
 wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 -c:a flac output.flac
 ```
 
 ### About Audio Format
 
-The program outputs **raw PCM audio data** (no file header) with the following format:
-- **Format**: Little-Endian signed 16-bit integers
-- **Sample Rate**: Uses device default (typically 48000 Hz or 44100 Hz)
-- **Channels**: Depends on system device (typically 2-channel stereo)
+The program outputs **raw PCM audio data** (no file header). The output format can be customized using command-line options:
 
-When running the program, the actual audio format will be displayed in error output (stderr), for example:
+**Default Behavior** (no format options specified):
+- Uses device's native format (typically 48000 Hz, 2 channels, 32-bit float)
+- Automatically converted to 16-bit PCM integer format
+
+**Custom Format** (with `--sample-rate`, `--channels`, `--bit-depth`):
+- **Sample Rate**: 8000-192000 Hz (e.g., 16000 for speech, 44100 for music)
+- **Channels**: 1 (mono) or 2 (stereo)
+- **Bit Depth**: 16/24/32 bits (16-bit recommended for compatibility)
+
+**Format Conversion:**
+The program uses Windows Media Foundation's built-in resampler for high-quality real-time audio conversion:
+- ✅ Automatic format detection (PCM/Float)
+- ✅ Sample rate conversion (e.g., 48000→16000 Hz)
+- ✅ Channel conversion (e.g., stereo→mono)
+- ✅ Bit depth conversion (e.g., 32-bit float→16-bit PCM)
+
+When running the program, the output format will be displayed:
 ```
-Final format: 48000Hz, 2 channels, 16 bits
+========================================
+Output Audio Format:
+  Sample Rate: 16000 Hz
+  Channels:    1
+  Bit Depth:   16 bits
+========================================
 ```
 
-When using FFmpeg, configure parameters based on these values:
-- `-f s16le`: 16-bit little-endian PCM
-- `-ar 48000`: Sample rate 48000 Hz
-- `-ac 2`: 2 channels
+**FFmpeg Parameter Mapping:**
+| Output Format | FFmpeg Parameters |
+|---------------|-------------------|
+| 16kHz, Mono, 16-bit | `-f s16le -ar 16000 -ac 1` |
+| 44.1kHz, Stereo, 16-bit | `-f s16le -ar 44100 -ac 2` |
+| 48kHz, Stereo, 24-bit | `-f s24le -ar 48000 -ac 2` |
+| 48kHz, Stereo, 32-bit | `-f s32le -ar 48000 -ac 2` |
 
 ## Troubleshooting
 
