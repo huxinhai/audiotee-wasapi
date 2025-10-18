@@ -255,9 +255,14 @@ public:
             return false;
         }
         
-        hr = MFInitMediaTypeFromWaveFormatEx(pInputType, pInputFormat, sizeof(WAVEFORMATEX));
+        // Calculate the correct size for WAVEFORMATEX structure
+        UINT32 waveFormatSize = sizeof(WAVEFORMATEX) + pInputFormat->cbSize;
+        hr = MFInitMediaTypeFromWaveFormatEx(pInputType, pInputFormat, waveFormatSize);
         if (FAILED(hr)) {
             std::cerr << "Failed to init input media type from WAVEFORMATEX: 0x" << std::hex << hr << std::dec << std::endl;
+            std::cerr << "  Format tag: " << pInputFormat->wFormatTag << std::endl;
+            std::cerr << "  cbSize: " << pInputFormat->cbSize << std::endl;
+            std::cerr << "  Total size: " << waveFormatSize << std::endl;
             return false;
         }
         std::cerr << "Input media type configured" << std::endl;
@@ -269,9 +274,13 @@ public:
             return false;
         }
         
-        hr = MFInitMediaTypeFromWaveFormatEx(pOutputType, pOutputFormat, sizeof(WAVEFORMATEX));
+        // Output format size (simple PCM format)
+        UINT32 outputWaveFormatSize = sizeof(WAVEFORMATEX) + pOutputFormat->cbSize;
+        hr = MFInitMediaTypeFromWaveFormatEx(pOutputType, pOutputFormat, outputWaveFormatSize);
         if (FAILED(hr)) {
             std::cerr << "Failed to init output media type from WAVEFORMATEX: 0x" << std::hex << hr << std::dec << std::endl;
+            std::cerr << "  Format tag: " << pOutputFormat->wFormatTag << std::endl;
+            std::cerr << "  cbSize: " << pOutputFormat->cbSize << std::endl;
             return false;
         }
         std::cerr << "Output media type configured" << std::endl;
