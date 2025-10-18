@@ -100,8 +100,14 @@ cd build
 cmake .. -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
 
-# Or using cl.exe directly
-cl.exe /EHsc /O2 /std:c++17 src\wasapi_capture.cpp ole32.lib psapi.lib /Fe:wasapi_capture.exe
+# Or using cl.exe directly (compile all source files)
+cl.exe /EHsc /O2 /std:c++17 /I"src" ^
+    src\main.cpp ^
+    src\core\wasapi_capture_impl.cpp ^
+    src\core\audio_resampler.cpp ^
+    src\utils\error_handler.cpp ^
+    ole32.lib psapi.lib mf.lib mfplat.lib mfreadwrite.lib ^
+    /Fe:wasapi_capture.exe
 ```
 
 ## Usage
@@ -346,25 +352,40 @@ The workflow (`.github/workflows/build-release.yml`) includes:
 audiotee-wasapi/
 ├── .github/
 │   └── workflows/
-│       └── build-release.yml   # GitHub Actions workflow
+│       └── build-release.yml        # GitHub Actions workflow
 ├── src/
-│   └── wasapi_capture.cpp      # Main program source code
+│   ├── main.cpp                     # Application entry point
+│   ├── core/                        # Core audio processing modules
+│   │   ├── wasapi_capture.h
+│   │   ├── wasapi_capture_impl.cpp
+│   │   ├── audio_resampler.h
+│   │   └── audio_resampler.cpp
+│   └── utils/                       # Utility modules
+│       ├── common.h
+│       ├── error_handler.h
+│       └── error_handler.cpp
 ├── scripts/
-│   ├── build.bat               # CMake build script
-│   └── build_simple.bat        # cl.exe direct compilation script
+│   ├── build.bat                    # CMake build script
+│   └── build_simple.bat             # cl.exe direct compilation script
 ├── docs/
-│   ├── QUICK_START.md          # Quick start guide
-│   └── RELEASE_GUIDE.md        # Release guide
-├── CMakeLists.txt              # CMake build configuration
-├── build.bat                   # Quick build shortcut
-├── README.md                   # This file (English)
-├── README_CN.md                # Chinese documentation
-└── .gitignore                  # Git ignore rules
+│   ├── ARCHITECTURE.md              # Architecture design
+│   ├── CODE_STRUCTURE.md            # Code structure
+│   ├── QUICK_START.md               # Quick start guide
+│   └── RELEASE_GUIDE.md             # Release guide
+├── CMakeLists.txt                   # CMake build configuration
+├── build.bat                        # Quick build shortcut
+├── README.md                        # This file (English)
+├── README_CN.md                     # Chinese documentation
+├── LAYERED_REFACTORING.md           # Layered refactoring summary
+└── .gitignore                       # Git ignore rules
 ```
 
 ### Dependencies
 - `ole32.lib` - COM library
 - `psapi.lib` - Process Status API
+- `mf.lib` - Media Foundation
+- `mfplat.lib` - Media Foundation Platform
+- `mfreadwrite.lib` - Media Foundation Read/Write
 
 ### Build Requirements
 - C++17 standard

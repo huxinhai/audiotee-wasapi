@@ -4,8 +4,13 @@ project(WASAPICapture)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add executable
-add_executable(wasapi_capture src/wasapi_capture.cpp)
+# Add executable with all source files
+add_executable(wasapi_capture
+    src/main.cpp
+    src/core/wasapi_capture_impl.cpp
+    src/core/audio_resampler.cpp
+    src/utils/error_handler.cpp
+)
 
 # Link required Windows libraries
 target_link_libraries(wasapi_capture

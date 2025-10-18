@@ -100,8 +100,14 @@ cd build
 cmake .. -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
 
-# 或直接使用 cl.exe
-cl.exe /EHsc /O2 /std:c++17 src\wasapi_capture.cpp ole32.lib psapi.lib /Fe:wasapi_capture.exe
+# 或直接使用 cl.exe（编译所有源文件）
+cl.exe /EHsc /O2 /std:c++17 /I"src" ^
+    src\main.cpp ^
+    src\core\wasapi_capture_impl.cpp ^
+    src\core\audio_resampler.cpp ^
+    src\utils\error_handler.cpp ^
+    ole32.lib psapi.lib mf.lib mfplat.lib mfreadwrite.lib ^
+    /Fe:wasapi_capture.exe
 ```
 
 ## 使用说明
@@ -348,25 +354,40 @@ wasapi_capture.exe 2>nul | ffmpeg -f s16le -ar 48000 -ac 2 -i pipe:0 -c:a flac o
 audiotee-wasapi/
 ├── .github/
 │   └── workflows/
-│       └── build-release.yml   # GitHub Actions 工作流
+│       └── build-release.yml        # GitHub Actions 工作流
 ├── src/
-│   └── wasapi_capture.cpp      # 主程序源代码
+│   ├── main.cpp                     # 应用程序入口
+│   ├── core/                        # 核心音频处理模块
+│   │   ├── wasapi_capture.h
+│   │   ├── wasapi_capture_impl.cpp
+│   │   ├── audio_resampler.h
+│   │   └── audio_resampler.cpp
+│   └── utils/                       # 工具模块
+│       ├── common.h
+│       ├── error_handler.h
+│       └── error_handler.cpp
 ├── scripts/
-│   ├── build.bat               # CMake 编译脚本
-│   └── build_simple.bat        # cl.exe 直接编译脚本
+│   ├── build.bat                    # CMake 编译脚本
+│   └── build_simple.bat             # cl.exe 直接编译脚本
 ├── docs/
-│   ├── QUICK_START.md          # 快速开始指南
-│   └── RELEASE_GUIDE.md        # 发布指南
-├── CMakeLists.txt              # CMake 构建配置
-├── build.bat                   # 快速构建快捷方式
-├── README.md                   # 英文文档
-├── README_CN.md                # 本文件（中文）
-└── .gitignore                  # Git 忽略规则
+│   ├── ARCHITECTURE.md              # 架构设计
+│   ├── CODE_STRUCTURE.md            # 代码结构
+│   ├── QUICK_START.md               # 快速开始指南
+│   └── RELEASE_GUIDE.md             # 发布指南
+├── CMakeLists.txt                   # CMake 构建配置
+├── build.bat                        # 快速构建快捷方式
+├── README.md                        # 英文文档
+├── README_CN.md                     # 本文件（中文）
+├── LAYERED_REFACTORING.md           # 分层重构总结
+└── .gitignore                       # Git 忽略规则
 ```
 
 ### 依赖库
 - `ole32.lib` - COM 库
 - `psapi.lib` - 进程状态 API
+- `mf.lib` - Media Foundation
+- `mfplat.lib` - Media Foundation 平台
+- `mfreadwrite.lib` - Media Foundation 读写
 
 ### 编译要求
 - C++17 标准
