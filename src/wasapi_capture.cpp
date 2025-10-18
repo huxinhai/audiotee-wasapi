@@ -26,7 +26,7 @@
 #pragma comment(lib, "mf.lib")
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfreadwrite.lib")
-#pragma comment(lib, "wmcodecdsp.lib")
+#pragma comment(lib, "wmcodecdspuuid.lib")
 
 // Safe release macro
 template <class T> void SafeRelease(T** ppT) {
