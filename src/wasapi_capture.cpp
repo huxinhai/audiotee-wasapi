@@ -19,6 +19,7 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <mferror.h>
+#include <initguid.h>
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "psapi.lib")
@@ -28,7 +29,9 @@
 
 // Define CLSID for Windows Media Audio Resampler DSP
 // This avoids dependency on wmcodecdsp.lib
-DEFINE_GUID(CLSID_CResamplerMediaObject, 0xf447b69e, 0x1884, 0x4a7e, 0x80, 0x55, 0x34, 0x6f, 0x74, 0xd6, 0xed, 0xb3);
+// {F447B69E-1884-4A7E-8055-346F74D6EDB3}
+static const GUID CLSID_CResamplerMediaObject = 
+    { 0xf447b69e, 0x1884, 0x4a7e, { 0x80, 0x55, 0x34, 0x6f, 0x74, 0xd6, 0xed, 0xb3 } };
 
 // Safe release macro
 template <class T> void SafeRelease(T** ppT) {
