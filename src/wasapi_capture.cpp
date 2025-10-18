@@ -6,9 +6,6 @@
 #include <functiondiscoverykeys_devpkey.h>
 #include <audiopolicy.h>
 #include <psapi.h>
-#include <mmreg.h>
-#include <ks.h>
-#include <ksmedia.h>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -16,12 +13,20 @@
 #include <memory>
 #include <map>
 #include <comdef.h>
-#include <io.h>  
-#include <fcntl.h> 
-#include <samplerate.h>
+#include <io.h>
+#include <fcntl.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <mferror.h>
+#include <wmcodecdsp.h>
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "psapi.lib")
+#pragma comment(lib, "mf.lib")
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "wmcodecdsp.lib")
 
 // Safe release macro
 template <class T> void SafeRelease(T** ppT) {
@@ -43,279 +48,6 @@ enum class ErrorCode {
     DRIVER_ERROR = 7,
     INVALID_PARAMETER = 8,
     UNKNOWN_ERROR = 99
-};
-
-// Audio format converter helper
-class AudioFormatConverter {
-public:
-    // 将 32-bit float 转换为指定格式
-    static void FloatToPCM(const BYTE* floatData, UINT32 numSamples, int outputBits, std::vector<BYTE>& outputData) {
-        const float* floatSamples = reinterpret_cast<const float*>(floatData);
-        
-        if (outputBits == 16) {
-            // 转换为 16-bit PCM
-            outputData.resize(numSamples * sizeof(int16_t));
-            int16_t* int16Data = reinterpret_cast<int16_t*>(outputData.data());
-            
-            for (UINT32 i = 0; i < numSamples; i++) {
-                float sample = floatSamples[i];
-                // Float 范围是 [-1.0, 1.0]，转换为 [-32768, 32767]
-                sample = sample * 32768.0f;
-                
-                // 限幅
-                if (sample > 32767.0f) sample = 32767.0f;
-                if (sample < -32768.0f) sample = -32768.0f;
-                
-                // 舍入
-                int16Data[i] = static_cast<int16_t>(sample >= 0.0f ? sample + 0.5f : sample - 0.5f);
-            }
-        }
-        else if (outputBits == 32) {
-            // 转换为 32-bit PCM (保持 float 格式)
-            outputData.resize(numSamples * sizeof(float));
-            float* outputFloat = reinterpret_cast<float*>(outputData.data());
-            
-            for (UINT32 i = 0; i < numSamples; i++) {
-                outputFloat[i] = floatSamples[i]; // 直接复制
-            }
-        }
-    }
-    
-    // 将 16-bit PCM 转换为指定格式
-    static void Int16ToPCM(const BYTE* int16Data, UINT32 numSamples, int outputBits, std::vector<BYTE>& outputData) {
-        const int16_t* samples = reinterpret_cast<const int16_t*>(int16Data);
-        
-        if (outputBits == 16) {
-            // 直接复制
-            outputData.resize(numSamples * sizeof(int16_t));
-            memcpy(outputData.data(), int16Data, outputData.size());
-        }
-        else if (outputBits == 32) {
-            // 转换为 32-bit float
-            outputData.resize(numSamples * sizeof(float));
-            float* outputFloat = reinterpret_cast<float*>(outputData.data());
-            
-            for (UINT32 i = 0; i < numSamples; i++) {
-                // 16-bit 范围 [-32768, 32767] 转换为 float [-1.0, 1.0)
-                outputFloat[i] = samples[i] * (1.0f / 32768.0f);
-            }
-        }
-    }
-    
-    // 声道转换
-    static void ConvertChannels(const BYTE* inputData, UINT32 inputFrames, int inputChannels, 
-                               int outputChannels, int bitsPerSample, std::vector<BYTE>& outputData) {
-        if (inputChannels == outputChannels) {
-            // 声道数相同，直接复制
-            UINT32 bytesPerSample = bitsPerSample / 8;
-            outputData.resize(inputFrames * outputChannels * bytesPerSample);
-            memcpy(outputData.data(), inputData, outputData.size());
-            return;
-        }
-        
-        UINT32 bytesPerSample = bitsPerSample / 8;
-        outputData.resize(inputFrames * outputChannels * bytesPerSample);
-        
-        if (inputChannels == 2 && outputChannels == 1) {
-            // 立体声转单声道（取平均值）
-            if (bitsPerSample == 16) {
-                const int16_t* input = reinterpret_cast<const int16_t*>(inputData);
-                int16_t* output = reinterpret_cast<int16_t*>(outputData.data());
-                
-                for (UINT32 i = 0; i < inputFrames; i++) {
-                    int32_t left = input[i * 2];
-                    int32_t right = input[i * 2 + 1];
-                    output[i] = static_cast<int16_t>((left + right) / 2);
-                }
-            }
-            else if (bitsPerSample == 32) {
-                const float* input = reinterpret_cast<const float*>(inputData);
-                float* output = reinterpret_cast<float*>(outputData.data());
-                
-                for (UINT32 i = 0; i < inputFrames; i++) {
-                    output[i] = (input[i * 2] + input[i * 2 + 1]) * 0.5f;
-                }
-            }
-        }
-        else if (inputChannels == 1 && outputChannels == 2) {
-            // 单声道转立体声（复制到两个声道）
-            if (bitsPerSample == 16) {
-                const int16_t* input = reinterpret_cast<const int16_t*>(inputData);
-                int16_t* output = reinterpret_cast<int16_t*>(outputData.data());
-                
-                for (UINT32 i = 0; i < inputFrames; i++) {
-                    output[i * 2] = input[i];     // 左声道
-                    output[i * 2 + 1] = input[i]; // 右声道
-                }
-            }
-            else if (bitsPerSample == 32) {
-                const float* input = reinterpret_cast<const float*>(inputData);
-                float* output = reinterpret_cast<float*>(outputData.data());
-                
-                for (UINT32 i = 0; i < inputFrames; i++) {
-                    output[i * 2] = input[i];     // 左声道
-                    output[i * 2 + 1] = input[i]; // 右声道
-                }
-            }
-        }
-    }
-};
-
-// Resampler wrapper class
-class AudioResampler {
-private:
-    SRC_STATE* srcState = nullptr;
-    int inputRate = 0;
-    int outputRate = 0;
-    int channels = 0;
-    int bitsPerSample = 0;
-    std::vector<float> inputBuffer;
-    std::vector<float> outputBuffer;
-    bool firstProcess = true; // 用于调试首次处理
-
-public:
-    AudioResampler() {}
-
-    ~AudioResampler() {
-        if (srcState) {
-            src_delete(srcState);
-            srcState = nullptr;
-        }
-    }
-
-    bool Initialize(int inRate, int outRate, int numChannels, int bitsPerSample) {
-        inputRate = inRate;
-        outputRate = outRate;
-        channels = numChannels;
-        this->bitsPerSample = bitsPerSample;
-
-        int error = 0;
-        // 使用最高质量的转换器避免失真
-        // SRC_SINC_BEST_QUALITY: 最高质量，适合所有采样率转换
-        // SRC_SINC_MEDIUM_QUALITY: 中等质量，对大比率转换可能有失真
-        // SRC_SINC_FASTEST: 最快但质量最低
-        srcState = src_new(SRC_SINC_BEST_QUALITY, channels, &error);
-
-        if (!srcState) {
-            std::cerr << "Failed to create resampler: " << src_strerror(error) << std::endl;
-            return false;
-        }
-
-        double ratio = (double)outRate / inRate;
-        std::cerr << "Resampler initialized successfully:" << std::endl;
-        std::cerr << "  Input:  " << inRate << " Hz, " << channels << " channels, " << bitsPerSample << " bits" << std::endl;
-        std::cerr << "  Output: " << outRate << " Hz, " << channels << " channels, " << bitsPerSample << " bits" << std::endl;
-        std::cerr << "  Ratio:  " << ratio << " (using SRC_SINC_BEST_QUALITY)" << std::endl;
-        
-        if (ratio < 0.1 || ratio > 10.0) {
-            std::cerr << "  Warning: Large conversion ratio may affect quality" << std::endl;
-        }
-
-        return true;
-    }
-
-    // 转换音频数据（支持 16-bit 和 32-bit float）
-    bool Process(const BYTE* inputData, UINT32 inputFrames, std::vector<BYTE>& outputData) {
-        if (!srcState) return false;
-        
-        if (inputFrames == 0) {
-            outputData.clear();
-            return true;
-        }
-
-        // 计算输出帧数
-        double ratio = (double)outputRate / inputRate;
-        UINT32 outputFrames = static_cast<UINT32>(inputFrames * ratio) + 16; // 加一些缓冲
-
-        // 转换为 float (libsamplerate 使用 float)
-        size_t inputSamples = inputFrames * channels;
-        inputBuffer.resize(inputSamples);
-
-        // 根据位深度转换输入数据为 float
-        if (bitsPerSample == 16) {
-            const int16_t* int16Data = reinterpret_cast<const int16_t*>(inputData);
-            for (size_t i = 0; i < inputSamples; i++) {
-                // 正确的归一化：范围 [-1.0, 1.0)
-                inputBuffer[i] = int16Data[i] * (1.0f / 32768.0f);
-            }
-        }
-        else if (bitsPerSample == 32) {
-            const float* floatData = reinterpret_cast<const float*>(inputData);
-            for (size_t i = 0; i < inputSamples; i++) {
-                inputBuffer[i] = floatData[i];
-            }
-        }
-        else {
-            std::cerr << "Unsupported bit depth for resampling: " << bitsPerSample << std::endl;
-            return false;
-        }
-
-        // 准备输出缓冲
-        size_t outputSamples = outputFrames * channels;
-        outputBuffer.resize(outputSamples);
-
-        // 设置转换参数
-        SRC_DATA srcData;
-        srcData.data_in = inputBuffer.data();
-        srcData.input_frames = inputFrames;
-        srcData.data_out = outputBuffer.data();
-        srcData.output_frames = outputFrames;
-        srcData.src_ratio = ratio;
-        srcData.end_of_input = 0;
-
-        // 执行转换
-        int error = src_process(srcState, &srcData);
-        if (error) {
-            std::cerr << "Resampling error: " << src_strerror(error) << std::endl;
-            return false;
-        }
-        
-        // 调试：输出首次转换的信息
-        if (firstProcess) {
-            std::cerr << "First resampling:" << std::endl;
-            std::cerr << "  Input frames:  " << srcData.input_frames << " -> " 
-                     << srcData.input_frames_used << " used" << std::endl;
-            std::cerr << "  Output frames: " << srcData.output_frames << " available -> " 
-                     << srcData.output_frames_gen << " generated" << std::endl;
-            std::cerr << "  Ratio: " << srcData.src_ratio << std::endl;
-            firstProcess = false;
-        }
-
-        // 转换回原始位深度
-        size_t actualOutputSamples = srcData.output_frames_gen * channels;
-        
-        if (bitsPerSample == 16) {
-            outputData.resize(actualOutputSamples * sizeof(int16_t));
-            int16_t* outputInt16 = reinterpret_cast<int16_t*>(outputData.data());
-
-            for (size_t i = 0; i < actualOutputSamples; i++) {
-                float sample = outputBuffer[i] * 32768.0f;
-                // 限幅到 16-bit 范围
-                if (sample > 32767.0f) sample = 32767.0f;
-                if (sample < -32768.0f) sample = -32768.0f;
-                // 使用舍入而不是截断，减少量化噪声
-                outputInt16[i] = static_cast<int16_t>(sample >= 0.0f ? sample + 0.5f : sample - 0.5f);
-            }
-        }
-        else if (bitsPerSample == 32) {
-            outputData.resize(actualOutputSamples * sizeof(float));
-            float* outputFloat = reinterpret_cast<float*>(outputData.data());
-
-            for (size_t i = 0; i < actualOutputSamples; i++) {
-                outputFloat[i] = outputBuffer[i];
-            }
-        }
-
-        return true;
-    }
-
-    bool IsActive() const {
-        return srcState != nullptr;
-    }
-
-    int GetOutputRate() const {
-        return outputRate;
-    }
 };
 
 // Detailed error information helper
@@ -475,6 +207,158 @@ public:
     }
 };
 
+// Audio Resampler class for format conversion
+class AudioResampler {
+private:
+    IMFTransform* pResampler = nullptr;
+    IMFMediaType* pInputType = nullptr;
+    IMFMediaType* pOutputType = nullptr;
+    IMFSample* pInputSample = nullptr;
+    IMFSample* pOutputSample = nullptr;
+    IMFMediaBuffer* pInputBuffer = nullptr;
+    IMFMediaBuffer* pOutputBuffer = nullptr;
+    
+    WAVEFORMATEX* pInputFormat = nullptr;
+    WAVEFORMATEX* pOutputFormat = nullptr;
+    
+    bool initialized = false;
+    
+public:
+    AudioResampler() {}
+    
+    ~AudioResampler() {
+        Cleanup();
+    }
+    
+    bool Initialize(WAVEFORMATEX* inputFormat, WAVEFORMATEX* outputFormat) {
+        if (!inputFormat || !outputFormat) {
+            return false;
+        }
+        
+        pInputFormat = inputFormat;
+        pOutputFormat = outputFormat;
+        
+        HRESULT hr = CoCreateInstance(CLSID_CResamplerMediaObject, nullptr, 
+                                     CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pResampler));
+        if (FAILED(hr)) {
+            std::cerr << "Failed to create resampler: 0x" << std::hex << hr << std::endl;
+            return false;
+        }
+        
+        // Create input media type
+        hr = MFCreateMediaType(&pInputType);
+        if (FAILED(hr)) return false;
+        
+        hr = MFInitMediaTypeFromWaveFormatEx(pInputType, pInputFormat, sizeof(WAVEFORMATEX));
+        if (FAILED(hr)) return false;
+        
+        // Create output media type
+        hr = MFCreateMediaType(&pOutputType);
+        if (FAILED(hr)) return false;
+        
+        hr = MFInitMediaTypeFromWaveFormatEx(pOutputType, pOutputFormat, sizeof(WAVEFORMATEX));
+        if (FAILED(hr)) return false;
+        
+        // Set media types
+        hr = pResampler->SetInputType(0, pInputType, 0);
+        if (FAILED(hr)) return false;
+        
+        hr = pResampler->SetOutputType(0, pOutputType, 0);
+        if (FAILED(hr)) return false;
+        
+        // Process input
+        hr = pResampler->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
+        if (FAILED(hr)) return false;
+        
+        hr = pResampler->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
+        if (FAILED(hr)) return false;
+        
+        hr = pResampler->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
+        if (FAILED(hr)) return false;
+        
+        initialized = true;
+        return true;
+    }
+    
+    bool ProcessAudio(const BYTE* inputData, UINT32 inputSize, 
+                     std::vector<BYTE>& outputData) {
+        if (!initialized || !inputData || inputSize == 0) {
+            return false;
+        }
+        
+        HRESULT hr;
+        
+        // Create input sample and buffer
+        hr = MFCreateSample(&pInputSample);
+        if (FAILED(hr)) return false;
+        
+        hr = MFCreateMemoryBuffer(inputSize, &pInputBuffer);
+        if (FAILED(hr)) return false;
+        
+        hr = pInputSample->AddBuffer(pInputBuffer);
+        if (FAILED(hr)) return false;
+        
+        // Copy input data
+        BYTE* pBufferData = nullptr;
+        hr = pInputBuffer->Lock(&pBufferData, nullptr, nullptr);
+        if (FAILED(hr)) return false;
+        
+        memcpy(pBufferData, inputData, inputSize);
+        pInputBuffer->Unlock();
+        
+        hr = pInputBuffer->SetCurrentLength(inputSize);
+        if (FAILED(hr)) return false;
+        
+        // Process the sample
+        DWORD status = 0;
+        MFT_OUTPUT_DATA_BUFFER outputDataBuffer = {};
+        
+        hr = pResampler->ProcessInput(0, pInputSample, 0);
+        if (FAILED(hr)) return false;
+        
+        // Get output
+        hr = pResampler->ProcessOutput(0, 1, &outputDataBuffer, &status);
+        if (FAILED(hr)) {
+            if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
+                // Need more input data
+                return true;
+            }
+            return false;
+        }
+        
+        // Extract output data
+        if (outputDataBuffer.pSample) {
+            IMFMediaBuffer* pOutBuffer = nullptr;
+            hr = outputDataBuffer.pSample->ConvertToContiguousBuffer(&pOutBuffer);
+            if (SUCCEEDED(hr)) {
+                BYTE* pOutData = nullptr;
+                DWORD outSize = 0;
+                
+                hr = pOutBuffer->Lock(&pOutData, nullptr, &outSize);
+                if (SUCCEEDED(hr)) {
+                    outputData.assign(pOutData, pOutData + outSize);
+                    pOutBuffer->Unlock();
+                }
+                pOutBuffer->Release();
+            }
+            outputDataBuffer.pSample->Release();
+        }
+        
+        return true;
+    }
+    
+    void Cleanup() {
+        SafeRelease(&pOutputBuffer);
+        SafeRelease(&pInputBuffer);
+        SafeRelease(&pOutputSample);
+        SafeRelease(&pInputSample);
+        SafeRelease(&pOutputType);
+        SafeRelease(&pInputType);
+        SafeRelease(&pResampler);
+        initialized = false;
+    }
+};
+
 class WASAPICapture {
 private:
     IMMDeviceEnumerator* pEnumerator = nullptr;
@@ -482,22 +366,20 @@ private:
     IAudioClient* pAudioClient = nullptr;
     IAudioCaptureClient* pCaptureClient = nullptr;
     WAVEFORMATEX* pwfx = nullptr;
+    WAVEFORMATEX* pOutputFormat = nullptr;
     UINT32 bufferFrameCount = 0;
 
-    int requestedSampleRate = 0;  // 用户请求的采样率
-    int deviceSampleRate = 0;     // 设备实际采样率
-    int requestedBitsPerSample = 0;  // 用户请求的位深度
-    int requestedChannels = 0;       // 用户请求的声道数
+    int sampleRate = 0;  // 0 means use device default
+    int channels = 0;    // 0 means use device default
+    int bitDepth = 0;    // 0 means use device default
     double chunkDuration = 0.2;  // seconds
     bool mute = false;
     std::vector<DWORD> includeProcesses;
     std::vector<DWORD> excludeProcesses;
 
     bool running = false;
-    AudioResampler resampler;  // 重采样器
-    bool needsResampling = false;  // 是否需要重采样
-    bool isFloatFormat = false;     // 是否是 float 格式
-    UINT32 bytesPerSample = 2;      // 每个采样的字节数
+    bool needsResampling = false;
+    std::unique_ptr<AudioResampler> resampler;
 
 public:
     WASAPICapture() {}
@@ -506,9 +388,9 @@ public:
         Cleanup();
     }
 
-    void SetSampleRate(int rate) { requestedSampleRate = rate; }
-    void SetBitsPerSample(int bits) { requestedBitsPerSample = bits; }
-    void SetChannels(int channels) { requestedChannels = channels; }
+    void SetSampleRate(int rate) { sampleRate = rate; }
+    void SetChannels(int ch) { channels = ch; }
+    void SetBitDepth(int bits) { bitDepth = bits; }
     void SetChunkDuration(double duration) { chunkDuration = duration; }
     void SetMute(bool m) { mute = m; }
     void AddIncludeProcess(DWORD pid) { includeProcesses.push_back(pid); }
@@ -520,6 +402,13 @@ public:
         HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         if (FAILED(hr)) {
             ErrorHandler::PrintDetailedError(hr, "Failed to initialize COM library");
+            return false;
+        }
+
+        // Initialize Media Foundation
+        hr = MFStartup(MF_VERSION);
+        if (FAILED(hr)) {
+            ErrorHandler::PrintDetailedError(hr, "Failed to initialize Media Foundation");
             return false;
         }
 
@@ -577,86 +466,72 @@ public:
             return false;
         }
 
-        // 保存设备采样率
-        deviceSampleRate = pwfx->nSamplesPerSec;
-        
-        std::cerr << "Device format: " << deviceSampleRate << "Hz, "
+        std::cerr << "Device format: " << pwfx->nSamplesPerSec << "Hz, "
                   << pwfx->nChannels << " channels, "
                   << pwfx->wBitsPerSample << " bits" << std::endl;
-        
-        // 检查音频格式 - 只支持 16-bit PCM
-        if (pwfx->wFormatTag != WAVE_FORMAT_PCM && pwfx->wFormatTag != WAVE_FORMAT_EXTENSIBLE) {
-            std::cerr << "\nERROR: Unsupported audio format tag: " << pwfx->wFormatTag << std::endl;
-            std::cerr << "Only PCM format is supported" << std::endl;
+
+        // Check if we need format conversion
+        int targetSampleRate = (sampleRate > 0) ? sampleRate : pwfx->nSamplesPerSec;
+        int targetChannels = (channels > 0) ? channels : pwfx->nChannels;
+        int targetBitDepth = (bitDepth > 0) ? bitDepth : pwfx->wBitsPerSample;
+
+        // Validate parameters
+        if (sampleRate > 0 && (sampleRate < 8000 || sampleRate > 192000)) {
+            std::cerr << "\nERROR: Invalid sample rate: " << sampleRate << std::endl;
+            std::cerr << "Valid range: 8000 - 192000 Hz" << std::endl;
+            std::cerr << "Common values: 44100, 48000" << std::endl;
             return false;
-        }
-        
-        // 检测设备音频格式
-        bytesPerSample = pwfx->wBitsPerSample / 8;
-        
-        std::cerr << "\n=== 设备音频格式检测 ===" << std::endl;
-        std::cerr << "设备格式: " << pwfx->nSamplesPerSec << "Hz, " 
-                  << pwfx->nChannels << " channels, " 
-                  << pwfx->wBitsPerSample << " bits" << std::endl;
-        
-        // 检测是否为 float 格式
-        if (pwfx->wBitsPerSample == 32 && pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
-            WAVEFORMATEXTENSIBLE* pWfxEx = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(pwfx);
-            if (pWfxEx->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) {
-                isFloatFormat = true;
-                std::cerr << "格式类型: 32-bit IEEE Float" << std::endl;
-            }
-        }
-        else if (pwfx->wBitsPerSample == 16) {
-            isFloatFormat = false;
-            std::cerr << "格式类型: 16-bit PCM" << std::endl;
-        }
-        else {
-            std::cerr << "\nWARNING: Unsupported bit depth: " << pwfx->wBitsPerSample << std::endl;
-            std::cerr << "Supported formats: 16-bit PCM, 32-bit float" << std::endl;
-            return false;
-        }
-        
-        // 显示用户请求的输出格式
-        std::cerr << "\n=== 输出格式配置 ===" << std::endl;
-        if (requestedBitsPerSample > 0) {
-            std::cerr << "输出位深度: " << requestedBitsPerSample << " bits" << std::endl;
-        } else {
-            std::cerr << "输出位深度: 16 bits (默认)" << std::endl;
-        }
-        
-        if (requestedChannels > 0) {
-            std::cerr << "输出声道: " << requestedChannels << " channels" << std::endl;
-        } else {
-            std::cerr << "输出声道: " << pwfx->nChannels << " channels (设备默认)" << std::endl;
         }
 
-        // Apply sample rate if specified
-        if (requestedSampleRate > 0) {
-            if (requestedSampleRate < 8000 || requestedSampleRate > 192000) {
-                std::cerr << "\nERROR: Invalid sample rate: " << requestedSampleRate << std::endl;
-                std::cerr << "Valid range: 8000 - 192000 Hz" << std::endl;
-                std::cerr << "Common values: 44100, 48000" << std::endl;
+        if (channels > 0 && (channels < 1 || channels > 8)) {
+            std::cerr << "\nERROR: Invalid channel count: " << channels << std::endl;
+            std::cerr << "Valid range: 1 - 8 channels" << std::endl;
+            std::cerr << "Common values: 1 (mono), 2 (stereo)" << std::endl;
+            return false;
+        }
+
+        if (bitDepth > 0 && (bitDepth != 16 && bitDepth != 24 && bitDepth != 32)) {
+            std::cerr << "\nERROR: Invalid bit depth: " << bitDepth << std::endl;
+            std::cerr << "Valid values: 16, 24, 32 bits" << std::endl;
+            return false;
+        }
+
+        // Check if we need resampling
+        needsResampling = (targetSampleRate != pwfx->nSamplesPerSec) ||
+                         (targetChannels != pwfx->nChannels) ||
+                         (targetBitDepth != pwfx->wBitsPerSample);
+
+        if (needsResampling) {
+            std::cerr << "Format conversion required:" << std::endl;
+            std::cerr << "  Input:  " << pwfx->nSamplesPerSec << "Hz, " 
+                      << pwfx->nChannels << " channels, " << pwfx->wBitsPerSample << " bits" << std::endl;
+            std::cerr << "  Output: " << targetSampleRate << "Hz, " 
+                      << targetChannels << " channels, " << targetBitDepth << " bits" << std::endl;
+
+            // Create output format
+            pOutputFormat = (WAVEFORMATEX*)CoTaskMemAlloc(sizeof(WAVEFORMATEX));
+            if (!pOutputFormat) {
+                std::cerr << "Failed to allocate memory for output format" << std::endl;
                 return false;
             }
-            std::cerr << "Requesting sample rate: " << requestedSampleRate << "Hz" << std::endl;
 
-            if (requestedSampleRate != deviceSampleRate) {
-                std::cerr << "Device does not natively support " << requestedSampleRate
-                    << "Hz, will use resampling" << std::endl;
+            // Copy input format and modify
+            memcpy(pOutputFormat, pwfx, sizeof(WAVEFORMATEX));
+            pOutputFormat->nSamplesPerSec = targetSampleRate;
+            pOutputFormat->nChannels = targetChannels;
+            pOutputFormat->wBitsPerSample = targetBitDepth;
+            pOutputFormat->nBlockAlign = (targetChannels * targetBitDepth) / 8;
+            pOutputFormat->nAvgBytesPerSec = targetSampleRate * pOutputFormat->nBlockAlign;
 
-                if (!resampler.Initialize(deviceSampleRate, requestedSampleRate, pwfx->nChannels, pwfx->wBitsPerSample)) {
-                    std::cerr << "ERROR: Failed to initialize resampler" << std::endl;
-                    return false;
-                }
-                needsResampling = true;
-                std::cerr << "Resampler ready: " << deviceSampleRate << "Hz -> "
-                    << requestedSampleRate << "Hz" << std::endl;
+            // Initialize resampler
+            resampler = std::make_unique<AudioResampler>();
+            if (!resampler->Initialize(pwfx, pOutputFormat)) {
+                std::cerr << "Failed to initialize audio resampler" << std::endl;
+                return false;
             }
-            else {
-                std::cerr << "Device natively supports " << requestedSampleRate << "Hz" << std::endl;
-                needsResampling = false;
-            }
+            std::cerr << "Audio resampler initialized successfully" << std::endl;
+        } else {
+            std::cerr << "No format conversion needed, using device format" << std::endl;
         }
 
         // Validate chunk duration
@@ -681,9 +556,9 @@ public:
         if (FAILED(hr)) {
             ErrorHandler::PrintDetailedError(hr, "Failed to initialize audio client");
 
-            if (hr == AUDCLNT_E_UNSUPPORTED_FORMAT && requestedSampleRate > 0) {
+            if (hr == AUDCLNT_E_UNSUPPORTED_FORMAT && sampleRate > 0) {
                 std::cerr << "\nAdditional Info:" << std::endl;
-                std::cerr << "  Your requested sample rate (" << requestedSampleRate
+                std::cerr << "  Your requested sample rate (" << sampleRate
                          << " Hz) is not supported by this device." << std::endl;
                 std::cerr << "  Try running without --sample-rate to use device default." << std::endl;
             } else if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
@@ -722,9 +597,18 @@ public:
         }
 
         std::cerr << "\n✓ Initialization successful!" << std::endl;
-        std::cerr << "Final format: " << pwfx->nSamplesPerSec << "Hz, "
-                  << pwfx->nChannels << " channels, "
-                  << pwfx->wBitsPerSample << " bits" << std::endl;
+        std::cerr << "========================================" << std::endl;
+        std::cerr << "Output Audio Format:" << std::endl;
+        if (needsResampling) {
+            std::cerr << "  Sample Rate: " << pOutputFormat->nSamplesPerSec << " Hz" << std::endl;
+            std::cerr << "  Channels:    " << pOutputFormat->nChannels << std::endl;
+            std::cerr << "  Bit Depth:   " << pOutputFormat->wBitsPerSample << " bits" << std::endl;
+        } else {
+            std::cerr << "  Sample Rate: " << pwfx->nSamplesPerSec << " Hz" << std::endl;
+            std::cerr << "  Channels:    " << pwfx->nChannels << std::endl;
+            std::cerr << "  Bit Depth:   " << pwfx->wBitsPerSample << " bits" << std::endl;
+        }
+        std::cerr << "========================================" << std::endl;
         std::cerr << std::endl;
 
         return true;
@@ -763,11 +647,6 @@ public:
 
         std::cerr << "Using event-driven capture mode (no frame drops)" << std::endl;
 
-        if (needsResampling) {
-            std::cerr << "Resampling enabled: " << deviceSampleRate << "Hz -> "
-                << requestedSampleRate << "Hz" << std::endl;
-        }
-
         // Event-driven capture loop
         while (running) {
             // Wait for buffer ready event with timeout
@@ -804,68 +683,26 @@ public:
 
                     if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
                         // Silent buffer - write zeros
-                        UINT32 outputFrames = numFramesAvailable;
-                        if (needsResampling) {
-                            double ratio = (double)requestedSampleRate / deviceSampleRate;
-                            outputFrames = static_cast<UINT32>(numFramesAvailable * ratio);
-                        }
-                        std::vector<BYTE> silence(outputFrames * pwfx->nBlockAlign, 0);
+                        UINT32 outputSize = numFramesAvailable * (needsResampling ? pOutputFormat->nBlockAlign : pwfx->nBlockAlign);
+                        std::vector<BYTE> silence(outputSize, 0);
                         std::cout.write(reinterpret_cast<char*>(silence.data()), silence.size());
                     } else {
-                        // 处理实际音频数据
-                        std::vector<BYTE> processedData;
-                        BYTE* currentData = pData;
-                        UINT32 currentFrames = numFramesAvailable;
-                        int currentChannels = pwfx->nChannels;
-                        int currentBits = pwfx->wBitsPerSample;
+                        // Process audio data
+                        UINT32 inputSize = numFramesAvailable * pwfx->nBlockAlign;
                         
-                        // 第一步：格式转换（如果需要）
-                        if (isFloatFormat) {
-                            UINT32 numSamples = currentFrames * currentChannels;
-                            int outputBits = (requestedBitsPerSample > 0) ? requestedBitsPerSample : 16;
-                            AudioFormatConverter::FloatToPCM(pData, numSamples, outputBits, processedData);
-                            currentData = processedData.data();
-                            currentBits = outputBits;
-                        }
-                        else if (requestedBitsPerSample > 0 && requestedBitsPerSample != currentBits) {
-                            UINT32 numSamples = currentFrames * currentChannels;
-                            AudioFormatConverter::Int16ToPCM(pData, numSamples, requestedBitsPerSample, processedData);
-                            currentData = processedData.data();
-                            currentBits = requestedBitsPerSample;
-                        }
-                        
-                        // 第二步：声道转换（如果需要）
-                        if (requestedChannels > 0 && requestedChannels != currentChannels) {
-                            std::vector<BYTE> channelConvertedData;
-                            AudioFormatConverter::ConvertChannels(currentData, currentFrames, 
-                                currentChannels, requestedChannels, currentBits, channelConvertedData);
-                            processedData = std::move(channelConvertedData);
-                            currentData = processedData.data();
-                            currentChannels = requestedChannels;
-                        }
-                        
-                        // 第三步：重采样（如果需要）
-                        if (needsResampling) {
-                            std::vector<BYTE> resampledData;
-                            if (resampler.Process(currentData, currentFrames, resampledData)) {
-                                std::cout.write(reinterpret_cast<char*>(resampledData.data()),
-                                    resampledData.size());
+                        if (needsResampling && resampler) {
+                            // Use resampler to convert format
+                            std::vector<BYTE> outputData;
+                            if (resampler->ProcessAudio(pData, inputSize, outputData)) {
+                                std::cout.write(reinterpret_cast<char*>(outputData.data()), outputData.size());
+                            } else {
+                                // Fallback: write original data
+                                std::cout.write(reinterpret_cast<char*>(pData), inputSize);
                             }
-                            else {
-                                std::cerr << "Resampling failed, skipping frame" << std::endl;
-                            }
+                        } else {
+                            // Write original audio data to stdout
+                            std::cout.write(reinterpret_cast<char*>(pData), inputSize);
                         }
-                        else {
-                            // 直接输出
-                            if (processedData.empty()) {
-                                UINT32 dataSize = currentFrames * currentChannels * (currentBits / 8);
-                                std::cout.write(reinterpret_cast<char*>(currentData), dataSize);
-                            }
-                            else {
-                                std::cout.write(reinterpret_cast<char*>(processedData.data()), processedData.size());
-                            }
-                        }
-                       
                     }
 
                     std::cout.flush();
@@ -925,66 +762,27 @@ public:
                     }
 
                     if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-                        UINT32 outputFrames = numFramesAvailable;
-                        if (needsResampling) {
-                            double ratio = (double)requestedSampleRate / deviceSampleRate;
-                            outputFrames = static_cast<UINT32>(numFramesAvailable * ratio);
-                        }
                         // Silent buffer - write zeros
-                        std::vector<BYTE> silence(outputFrames * pwfx->nBlockAlign, 0);
+                        UINT32 outputSize = numFramesAvailable * (needsResampling ? pOutputFormat->nBlockAlign : pwfx->nBlockAlign);
+                        std::vector<BYTE> silence(outputSize, 0);
                         std::cout.write(reinterpret_cast<char*>(silence.data()), silence.size());
                     } else {
-                        // 处理实际音频数据
-                        std::vector<BYTE> processedData;
-                        BYTE* currentData = pData;
-                        UINT32 currentFrames = numFramesAvailable;
-                        int currentChannels = pwfx->nChannels;
-                        int currentBits = pwfx->wBitsPerSample;
+                        // Process audio data
+                        UINT32 inputSize = numFramesAvailable * pwfx->nBlockAlign;
                         
-                        // 第一步：格式转换（如果需要）
-                        if (isFloatFormat) {
-                            UINT32 numSamples = currentFrames * currentChannels;
-                            int outputBits = (requestedBitsPerSample > 0) ? requestedBitsPerSample : 16;
-                            AudioFormatConverter::FloatToPCM(pData, numSamples, outputBits, processedData);
-                            currentData = processedData.data();
-                            currentBits = outputBits;
-                        }
-                        else if (requestedBitsPerSample > 0 && requestedBitsPerSample != currentBits) {
-                            UINT32 numSamples = currentFrames * currentChannels;
-                            AudioFormatConverter::Int16ToPCM(pData, numSamples, requestedBitsPerSample, processedData);
-                            currentData = processedData.data();
-                            currentBits = requestedBitsPerSample;
-                        }
-                        
-                        // 第二步：声道转换（如果需要）
-                        if (requestedChannels > 0 && requestedChannels != currentChannels) {
-                            std::vector<BYTE> channelConvertedData;
-                            AudioFormatConverter::ConvertChannels(currentData, currentFrames, 
-                                currentChannels, requestedChannels, currentBits, channelConvertedData);
-                            processedData = std::move(channelConvertedData);
-                            currentData = processedData.data();
-                            currentChannels = requestedChannels;
-                        }
-                        
-                        // 第三步：重采样（如果需要）
-                        if (needsResampling) {
-                            std::vector<BYTE> resampledData;
-                            if (resampler.Process(currentData, currentFrames, resampledData)) {
-                                std::cout.write(reinterpret_cast<char*>(resampledData.data()),
-                                    resampledData.size());
+                        if (needsResampling && resampler) {
+                            // Use resampler to convert format
+                            std::vector<BYTE> outputData;
+                            if (resampler->ProcessAudio(pData, inputSize, outputData)) {
+                                std::cout.write(reinterpret_cast<char*>(outputData.data()), outputData.size());
+                            } else {
+                                // Fallback: write original data
+                                std::cout.write(reinterpret_cast<char*>(pData), inputSize);
                             }
+                        } else {
+                            // Write original audio data to stdout
+                            std::cout.write(reinterpret_cast<char*>(pData), inputSize);
                         }
-                        else {
-                            // 直接输出
-                            if (processedData.empty()) {
-                                UINT32 dataSize = currentFrames * currentChannels * (currentBits / 8);
-                                std::cout.write(reinterpret_cast<char*>(currentData), dataSize);
-                            }
-                            else {
-                                std::cout.write(reinterpret_cast<char*>(processedData.data()), processedData.size());
-                            }
-                        }
-                     
                     }
 
                     std::cout.flush();
@@ -1008,15 +806,28 @@ public:
             pAudioClient->Stop();
         }
 
+        // Cleanup resampler
+        if (resampler) {
+            resampler.reset();
+        }
+
         if (pwfx) {
             CoTaskMemFree(pwfx);
             pwfx = nullptr;
+        }
+
+        if (pOutputFormat) {
+            CoTaskMemFree(pOutputFormat);
+            pOutputFormat = nullptr;
         }
 
         SafeRelease(&pCaptureClient);
         SafeRelease(&pAudioClient);
         SafeRelease(&pDevice);
         SafeRelease(&pEnumerator);
+
+        // Shutdown Media Foundation
+        MFShutdown();
 
         CoUninitialize();
     }
@@ -1039,17 +850,17 @@ void PrintUsage() {
     std::cerr << "Usage: wasapi_capture [options]\n"
               << "Options:\n"
               << "  --sample-rate <Hz>           Target sample rate (default: device default)\n"
-              << "  --bits-per-sample <bits>     Output bit depth: 16 or 32 (default: 16)\n"
-              << "  --channels <num>             Output channels: 1 or 2 (default: device default)\n"
+              << "  --channels <count>           Number of channels (default: device default)\n"
+              << "  --bit-depth <bits>           Bit depth: 16, 24, or 32 (default: device default)\n"
               << "  --chunk-duration <seconds>   Duration of each audio chunk (default: 0.2)\n"
               << "  --mute                       Mute system audio while capturing\n"
               << "  --include-processes <pid>... Only capture audio from these process IDs\n"
               << "  --exclude-processes <pid>... Exclude audio from these process IDs\n"
               << "  --help                       Show this help message\n"
               << "\nExamples:\n"
-              << "  wasapi_capture --sample-rate 16000 --bits-per-sample 16 --channels 1\n"
-              << "  wasapi_capture --sample-rate 48000 --bits-per-sample 32 --channels 2\n"
-              << "  wasapi_capture --sample-rate 44100  # Use device default format\n"
+              << "  wasapi_capture --sample-rate 48000 --channels 2 --bit-depth 16\n"
+              << "  wasapi_capture --sample-rate 44100\n"
+              << "  wasapi_capture --channels 1 --bit-depth 24\n"
               << std::endl;
 }
 
@@ -1098,26 +909,6 @@ int main(int argc, char* argv[]) {
                     return static_cast<int>(ErrorCode::INVALID_PARAMETER);
                 }
             }
-            else if (arg == "--bits-per-sample") {
-                if (i + 1 >= argc) {
-                    std::cerr << "ERROR: --bits-per-sample requires a value" << std::endl;
-                    std::cerr << "Example: --bits-per-sample 16" << std::endl;
-                    return static_cast<int>(ErrorCode::INVALID_PARAMETER);
-                }
-                try {
-                    int bits = std::stoi(argv[++i]);
-                    if (bits != 16 && bits != 32) {
-                        std::cerr << "ERROR: Invalid bit depth: " << bits << std::endl;
-                        std::cerr << "Valid values: 16 or 32" << std::endl;
-                        return static_cast<int>(ErrorCode::INVALID_PARAMETER);
-                    }
-                    capture.SetBitsPerSample(bits);
-                } catch (const std::exception& e) {
-                    std::cerr << "ERROR: Invalid bit depth value: " << argv[i] << std::endl;
-                    std::cerr << "Must be 16 or 32" << std::endl;
-                    return static_cast<int>(ErrorCode::INVALID_PARAMETER);
-                }
-            }
             else if (arg == "--channels") {
                 if (i + 1 >= argc) {
                     std::cerr << "ERROR: --channels requires a value" << std::endl;
@@ -1125,16 +916,36 @@ int main(int argc, char* argv[]) {
                     return static_cast<int>(ErrorCode::INVALID_PARAMETER);
                 }
                 try {
-                    int channels = std::stoi(argv[++i]);
-                    if (channels != 1 && channels != 2) {
-                        std::cerr << "ERROR: Invalid channel count: " << channels << std::endl;
-                        std::cerr << "Valid values: 1 (mono) or 2 (stereo)" << std::endl;
+                    int ch = std::stoi(argv[++i]);
+                    if (ch < 1 || ch > 8) {
+                        std::cerr << "ERROR: Channel count out of range: " << ch << std::endl;
+                        std::cerr << "Valid range: 1 - 8 channels" << std::endl;
                         return static_cast<int>(ErrorCode::INVALID_PARAMETER);
                     }
-                    capture.SetChannels(channels);
+                    capture.SetChannels(ch);
                 } catch (const std::exception& e) {
                     std::cerr << "ERROR: Invalid channel count value: " << argv[i] << std::endl;
-                    std::cerr << "Must be 1 or 2" << std::endl;
+                    std::cerr << "Must be a number between 1 and 8" << std::endl;
+                    return static_cast<int>(ErrorCode::INVALID_PARAMETER);
+                }
+            }
+            else if (arg == "--bit-depth") {
+                if (i + 1 >= argc) {
+                    std::cerr << "ERROR: --bit-depth requires a value" << std::endl;
+                    std::cerr << "Example: --bit-depth 16" << std::endl;
+                    return static_cast<int>(ErrorCode::INVALID_PARAMETER);
+                }
+                try {
+                    int bits = std::stoi(argv[++i]);
+                    if (bits != 16 && bits != 24 && bits != 32) {
+                        std::cerr << "ERROR: Invalid bit depth: " << bits << std::endl;
+                        std::cerr << "Valid values: 16, 24, 32 bits" << std::endl;
+                        return static_cast<int>(ErrorCode::INVALID_PARAMETER);
+                    }
+                    capture.SetBitDepth(bits);
+                } catch (const std::exception& e) {
+                    std::cerr << "ERROR: Invalid bit depth value: " << argv[i] << std::endl;
+                    std::cerr << "Must be 16, 24, or 32" << std::endl;
                     return static_cast<int>(ErrorCode::INVALID_PARAMETER);
                 }
             }
