@@ -19,19 +19,14 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <mferror.h>
-#include <initguid.h>
+#include <wmcodecdsp.h>
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "psapi.lib")
 #pragma comment(lib, "mf.lib")
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfreadwrite.lib")
-
-// Define CLSID for Windows Media Audio Resampler DSP
-// This avoids dependency on wmcodecdsp.lib
-// {F447B69E-1884-4A7E-8055-346F74D6EDB3}
-static const GUID CLSID_CResamplerMediaObject = 
-    { 0xf447b69e, 0x1884, 0x4a7e, { 0x80, 0x55, 0x34, 0x6f, 0x74, 0xd6, 0xed, 0xb3 } };
+#pragma comment(lib, "wmcodecdsp.lib")
 
 // Safe release macro
 template <class T> void SafeRelease(T** ppT) {
@@ -218,6 +213,10 @@ private:
     IMFTransform* pResampler = nullptr;
     IMFMediaType* pInputType = nullptr;
     IMFMediaType* pOutputType = nullptr;
+    IMFSample* pInputSample = nullptr;
+    IMFSample* pOutputSample = nullptr;
+    IMFMediaBuffer* pInputBuffer = nullptr;
+    IMFMediaBuffer* pOutputBuffer = nullptr;
     
     WAVEFORMATEX* pInputFormat = nullptr;
     WAVEFORMATEX* pOutputFormat = nullptr;
@@ -233,7 +232,6 @@ public:
     
     bool Initialize(WAVEFORMATEX* inputFormat, WAVEFORMATEX* outputFormat) {
         if (!inputFormat || !outputFormat) {
-            std::cerr << "Invalid input or output format" << std::endl;
             return false;
         }
         
@@ -243,74 +241,42 @@ public:
         HRESULT hr = CoCreateInstance(CLSID_CResamplerMediaObject, nullptr, 
                                      CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pResampler));
         if (FAILED(hr)) {
-            std::cerr << "Failed to create resampler: 0x" << std::hex << hr << std::dec << std::endl;
-            std::cerr << "Make sure Media Foundation is properly initialized" << std::endl;
+            std::cerr << "Failed to create resampler: 0x" << std::hex << hr << std::endl;
             return false;
         }
         
         // Create input media type
         hr = MFCreateMediaType(&pInputType);
-        if (FAILED(hr)) {
-            std::cerr << "Failed to create input media type: 0x" << std::hex << hr << std::dec << std::endl;
-            return false;
-        }
+        if (FAILED(hr)) return false;
         
-        // Set input type properties
-        pInputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
-        pInputType->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
-        pInputType->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, pInputFormat->nChannels);
-        pInputType->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, pInputFormat->nSamplesPerSec);
-        pInputType->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, pInputFormat->nBlockAlign);
-        pInputType->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, pInputFormat->nAvgBytesPerSec);
-        pInputType->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, pInputFormat->wBitsPerSample);
-        pInputType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+        hr = MFInitMediaTypeFromWaveFormatEx(pInputType, pInputFormat, sizeof(WAVEFORMATEX));
+        if (FAILED(hr)) return false;
         
         // Create output media type
         hr = MFCreateMediaType(&pOutputType);
-        if (FAILED(hr)) {
-            std::cerr << "Failed to create output media type: 0x" << std::hex << hr << std::dec << std::endl;
-            return false;
-        }
+        if (FAILED(hr)) return false;
         
-        // Set output type properties
-        pOutputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
-        pOutputType->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
-        pOutputType->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, pOutputFormat->nChannels);
-        pOutputType->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, pOutputFormat->nSamplesPerSec);
-        pOutputType->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, pOutputFormat->nBlockAlign);
-        pOutputType->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, pOutputFormat->nAvgBytesPerSec);
-        pOutputType->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, pOutputFormat->wBitsPerSample);
-        pOutputType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+        hr = MFInitMediaTypeFromWaveFormatEx(pOutputType, pOutputFormat, sizeof(WAVEFORMATEX));
+        if (FAILED(hr)) return false;
         
-        // Set input type on resampler
+        // Set media types
         hr = pResampler->SetInputType(0, pInputType, 0);
-        if (FAILED(hr)) {
-            std::cerr << "Failed to set input type on resampler: 0x" << std::hex << hr << std::dec << std::endl;
-            return false;
-        }
+        if (FAILED(hr)) return false;
         
-        // Set output type on resampler
         hr = pResampler->SetOutputType(0, pOutputType, 0);
-        if (FAILED(hr)) {
-            std::cerr << "Failed to set output type on resampler: 0x" << std::hex << hr << std::dec << std::endl;
-            return false;
-        }
+        if (FAILED(hr)) return false;
         
-        // Send required messages to the resampler
+        // Process input
+        hr = pResampler->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
+        if (FAILED(hr)) return false;
+        
         hr = pResampler->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
-        if (FAILED(hr)) {
-            std::cerr << "Failed to begin streaming: 0x" << std::hex << hr << std::dec << std::endl;
-            return false;
-        }
+        if (FAILED(hr)) return false;
         
         hr = pResampler->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-        if (FAILED(hr)) {
-            std::cerr << "Failed to start stream: 0x" << std::hex << hr << std::dec << std::endl;
-            return false;
-        }
+        if (FAILED(hr)) return false;
         
         initialized = true;
-        std::cerr << "Resampler initialized successfully" << std::endl;
         return true;
     }
     
@@ -321,107 +287,71 @@ public:
         }
         
         HRESULT hr;
-        IMFSample* pSample = nullptr;
-        IMFMediaBuffer* pBuffer = nullptr;
         
         // Create input sample and buffer
-        hr = MFCreateSample(&pSample);
-        if (FAILED(hr)) {
-            std::cerr << "Failed to create sample: 0x" << std::hex << hr << std::dec << std::endl;
-            return false;
-        }
+        hr = MFCreateSample(&pInputSample);
+        if (FAILED(hr)) return false;
         
-        hr = MFCreateMemoryBuffer(inputSize, &pBuffer);
-        if (FAILED(hr)) {
-            SafeRelease(&pSample);
-            std::cerr << "Failed to create buffer: 0x" << std::hex << hr << std::dec << std::endl;
-            return false;
-        }
+        hr = MFCreateMemoryBuffer(inputSize, &pInputBuffer);
+        if (FAILED(hr)) return false;
+        
+        hr = pInputSample->AddBuffer(pInputBuffer);
+        if (FAILED(hr)) return false;
         
         // Copy input data
         BYTE* pBufferData = nullptr;
-        hr = pBuffer->Lock(&pBufferData, nullptr, nullptr);
-        if (FAILED(hr)) {
-            SafeRelease(&pBuffer);
-            SafeRelease(&pSample);
-            return false;
-        }
+        hr = pInputBuffer->Lock(&pBufferData, nullptr, nullptr);
+        if (FAILED(hr)) return false;
         
         memcpy(pBufferData, inputData, inputSize);
-        pBuffer->Unlock();
-        pBuffer->SetCurrentLength(inputSize);
+        pInputBuffer->Unlock();
         
-        // Add buffer to sample
-        pSample->AddBuffer(pBuffer);
-        SafeRelease(&pBuffer);
+        hr = pInputBuffer->SetCurrentLength(inputSize);
+        if (FAILED(hr)) return false;
         
-        // Process input
-        hr = pResampler->ProcessInput(0, pSample, 0);
-        SafeRelease(&pSample);
+        // Process the sample
+        DWORD status = 0;
+        MFT_OUTPUT_DATA_BUFFER outputDataBuffer = {};
         
+        hr = pResampler->ProcessInput(0, pInputSample, 0);
+        if (FAILED(hr)) return false;
+        
+        // Get output
+        hr = pResampler->ProcessOutput(0, 1, &outputDataBuffer, &status);
         if (FAILED(hr)) {
-            if (hr != MF_E_NOTACCEPTING) {
-                std::cerr << "ProcessInput failed: 0x" << std::hex << hr << std::dec << std::endl;
+            if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
+                // Need more input data
+                return true;
             }
             return false;
         }
         
-        // Get output
-        MFT_OUTPUT_DATA_BUFFER outputBuffer = {};
-        MFT_OUTPUT_STREAM_INFO streamInfo = {};
-        
-        hr = pResampler->GetOutputStreamInfo(0, &streamInfo);
-        if (FAILED(hr)) {
-            return false;
-        }
-        
-        // Create output sample
-        hr = MFCreateSample(&outputBuffer.pSample);
-        if (FAILED(hr)) {
-            return false;
-        }
-        
-        hr = MFCreateMemoryBuffer(streamInfo.cbSize, &pBuffer);
-        if (FAILED(hr)) {
-            SafeRelease(&outputBuffer.pSample);
-            return false;
-        }
-        
-        outputBuffer.pSample->AddBuffer(pBuffer);
-        SafeRelease(&pBuffer);
-        
-        DWORD status = 0;
-        hr = pResampler->ProcessOutput(0, 1, &outputBuffer, &status);
-        
-        if (SUCCEEDED(hr)) {
-            // Extract output data
+        // Extract output data
+        if (outputDataBuffer.pSample) {
             IMFMediaBuffer* pOutBuffer = nullptr;
-            hr = outputBuffer.pSample->ConvertToContiguousBuffer(&pOutBuffer);
+            hr = outputDataBuffer.pSample->ConvertToContiguousBuffer(&pOutBuffer);
             if (SUCCEEDED(hr)) {
                 BYTE* pOutData = nullptr;
                 DWORD outSize = 0;
                 
                 hr = pOutBuffer->Lock(&pOutData, nullptr, &outSize);
-                if (SUCCEEDED(hr) && outSize > 0) {
+                if (SUCCEEDED(hr)) {
                     outputData.assign(pOutData, pOutData + outSize);
                     pOutBuffer->Unlock();
                 }
-                SafeRelease(&pOutBuffer);
+                pOutBuffer->Release();
             }
-            SafeRelease(&outputBuffer.pSample);
-            return true;
-        } else if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
-            // Need more input - this is normal
-            SafeRelease(&outputBuffer.pSample);
-            return true;
-        } else {
-            std::cerr << "ProcessOutput failed: 0x" << std::hex << hr << std::dec << std::endl;
-            SafeRelease(&outputBuffer.pSample);
-            return false;
+            outputDataBuffer.pSample->Release();
         }
+        
+        return true;
     }
     
     void Cleanup() {
+        SafeRelease(&pOutputBuffer);
+        SafeRelease(&pInputBuffer);
+        SafeRelease(&pOutputSample);
+        SafeRelease(&pInputSample);
         SafeRelease(&pOutputType);
         SafeRelease(&pInputType);
         SafeRelease(&pResampler);
