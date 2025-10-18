@@ -336,64 +336,95 @@ public:
         }
         
         HRESULT hr;
+        IMFSample* pSample = nullptr;
+        IMFMediaBuffer* pBuffer = nullptr;
         
         // Create input sample and buffer
-        hr = MFCreateSample(&pInputSample);
+        hr = MFCreateSample(&pSample);
         if (FAILED(hr)) return false;
         
-        hr = MFCreateMemoryBuffer(inputSize, &pInputBuffer);
-        if (FAILED(hr)) return false;
-        
-        hr = pInputSample->AddBuffer(pInputBuffer);
-        if (FAILED(hr)) return false;
+        hr = MFCreateMemoryBuffer(inputSize, &pBuffer);
+        if (FAILED(hr)) {
+            SafeRelease(&pSample);
+            return false;
+        }
         
         // Copy input data
         BYTE* pBufferData = nullptr;
-        hr = pInputBuffer->Lock(&pBufferData, nullptr, nullptr);
-        if (FAILED(hr)) return false;
+        hr = pBuffer->Lock(&pBufferData, nullptr, nullptr);
+        if (FAILED(hr)) {
+            SafeRelease(&pBuffer);
+            SafeRelease(&pSample);
+            return false;
+        }
         
         memcpy(pBufferData, inputData, inputSize);
-        pInputBuffer->Unlock();
+        pBuffer->Unlock();
+        pBuffer->SetCurrentLength(inputSize);
         
-        hr = pInputBuffer->SetCurrentLength(inputSize);
-        if (FAILED(hr)) return false;
+        // Add buffer to sample
+        pSample->AddBuffer(pBuffer);
+        SafeRelease(&pBuffer);
         
-        // Process the sample
-        DWORD status = 0;
-        MFT_OUTPUT_DATA_BUFFER outputDataBuffer = {};
+        // Process input
+        hr = pResampler->ProcessInput(0, pSample, 0);
+        SafeRelease(&pSample);
         
-        hr = pResampler->ProcessInput(0, pInputSample, 0);
-        if (FAILED(hr)) return false;
-        
-        // Get output
-        hr = pResampler->ProcessOutput(0, 1, &outputDataBuffer, &status);
         if (FAILED(hr)) {
-            if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
-                // Need more input data
-                return true;
+            if (hr != MF_E_NOTACCEPTING) {
+                std::cerr << "ProcessInput failed: 0x" << std::hex << hr << std::dec << std::endl;
             }
             return false;
         }
         
-        // Extract output data
-        if (outputDataBuffer.pSample) {
+        // Get output
+        MFT_OUTPUT_DATA_BUFFER outputBuffer = {};
+        MFT_OUTPUT_STREAM_INFO streamInfo = {};
+        
+        hr = pResampler->GetOutputStreamInfo(0, &streamInfo);
+        if (FAILED(hr)) return false;
+        
+        // Create output sample
+        hr = MFCreateSample(&outputBuffer.pSample);
+        if (FAILED(hr)) return false;
+        
+        hr = MFCreateMemoryBuffer(streamInfo.cbSize > 0 ? streamInfo.cbSize : 8192, &pBuffer);
+        if (FAILED(hr)) {
+            SafeRelease(&outputBuffer.pSample);
+            return false;
+        }
+        
+        outputBuffer.pSample->AddBuffer(pBuffer);
+        SafeRelease(&pBuffer);
+        
+        DWORD status = 0;
+        hr = pResampler->ProcessOutput(0, 1, &outputBuffer, &status);
+        
+        if (SUCCEEDED(hr)) {
+            // Extract output data
             IMFMediaBuffer* pOutBuffer = nullptr;
-            hr = outputDataBuffer.pSample->ConvertToContiguousBuffer(&pOutBuffer);
+            hr = outputBuffer.pSample->ConvertToContiguousBuffer(&pOutBuffer);
             if (SUCCEEDED(hr)) {
                 BYTE* pOutData = nullptr;
                 DWORD outSize = 0;
                 
                 hr = pOutBuffer->Lock(&pOutData, nullptr, &outSize);
-                if (SUCCEEDED(hr)) {
+                if (SUCCEEDED(hr) && outSize > 0) {
                     outputData.assign(pOutData, pOutData + outSize);
                     pOutBuffer->Unlock();
                 }
-                pOutBuffer->Release();
+                SafeRelease(&pOutBuffer);
             }
-            outputDataBuffer.pSample->Release();
+            SafeRelease(&outputBuffer.pSample);
+            return true;
+        } else if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
+            // Need more input - this is normal, resampler is buffering
+            SafeRelease(&outputBuffer.pSample);
+            return true;
+        } else {
+            SafeRelease(&outputBuffer.pSample);
+            return false;
         }
-        
-        return true;
     }
     
     void Cleanup() {
@@ -745,10 +776,13 @@ public:
                             // Use resampler to convert format
                             std::vector<BYTE> outputData;
                             if (resampler->ProcessAudio(pData, inputSize, outputData)) {
-                                std::cout.write(reinterpret_cast<char*>(outputData.data()), outputData.size());
+                                // Only write if we got output data
+                                if (!outputData.empty()) {
+                                    std::cout.write(reinterpret_cast<char*>(outputData.data()), outputData.size());
+                                }
+                                // If outputData is empty, resampler is buffering - this is normal
                             } else {
-                                // Fallback: write original data
-                                std::cout.write(reinterpret_cast<char*>(pData), inputSize);
+                                std::cerr << "Warning: Resampler ProcessAudio failed, skipping frame" << std::endl;
                             }
                         } else {
                             // Write original audio data to stdout
@@ -825,10 +859,13 @@ public:
                             // Use resampler to convert format
                             std::vector<BYTE> outputData;
                             if (resampler->ProcessAudio(pData, inputSize, outputData)) {
-                                std::cout.write(reinterpret_cast<char*>(outputData.data()), outputData.size());
+                                // Only write if we got output data
+                                if (!outputData.empty()) {
+                                    std::cout.write(reinterpret_cast<char*>(outputData.data()), outputData.size());
+                                }
+                                // If outputData is empty, resampler is buffering - this is normal
                             } else {
-                                // Fallback: write original data
-                                std::cout.write(reinterpret_cast<char*>(pData), inputSize);
+                                std::cerr << "Warning: Resampler ProcessAudio failed, skipping frame" << std::endl;
                             }
                         } else {
                             // Write original audio data to stdout
