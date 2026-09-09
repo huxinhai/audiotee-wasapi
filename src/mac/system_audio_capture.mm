@@ -18,6 +18,12 @@ std::atomic<bool> g_running(true);
         self.capture->OnAudioBuffer(sampleBuffer);
     }
 }
+
+- (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
+    if (self.capture) {
+        self.capture->OnStreamStopped(stream, error);
+    }
+}
 @end
 
 // ============================================================
@@ -89,7 +95,29 @@ bool SystemAudioCapture::Initialize() {
         return false;
     }
 
-    // Set up SCStream
+    delegate = [[AudioStreamDelegate alloc] init];
+    delegate.capture = this;
+
+    if (!CreateStream()) return false;
+
+    if (cfg.mute) std::cerr << "Note: Mute functionality is not yet implemented" << std::endl;
+
+    std::cerr << "\n✓ Initialization successful!" << std::endl;
+    std::cerr << "========================================" << std::endl;
+    std::cerr << "Output Audio Format:" << std::endl;
+    std::cerr << "  Sample Rate: " << targetSampleRate << " Hz" << std::endl;
+    std::cerr << "  Channels:    " << targetChannels << std::endl;
+    std::cerr << "  Bit Depth:   " << targetBitDepth << " bits" << std::endl;
+    std::cerr << "========================================\n" << std::endl;
+    return true;
+}
+
+bool SystemAudioCapture::CreateStream() {
+    activeStream.store(nullptr);
+    stream = nil;
+    filter = nil;
+    config = nil;
+
     __block bool initSuccess = false;
     __block bool initDone = false;
     __block NSError* initError = nil;
@@ -104,6 +132,12 @@ bool SystemAudioCapture::Initialize() {
                                                    completionHandler:^(SCShareableContent* content, NSError* error) {
         if (error) {
             initError = error;
+            initDone = true;
+            dispatch_semaphore_signal(sem);
+            return;
+        }
+
+        if (content.displays.count == 0) {
             initDone = true;
             dispatch_semaphore_signal(sem);
             return;
@@ -138,8 +172,6 @@ bool SystemAudioCapture::Initialize() {
                                                    exceptingWindows:@[]];
         }
 
-        captureThis->filter = contentFilter;
-
         SCStreamConfiguration* streamConfig = [[SCStreamConfiguration alloc] init];
         streamConfig.capturesAudio = YES;
         streamConfig.excludesCurrentProcessAudio = YES;
@@ -149,46 +181,42 @@ bool SystemAudioCapture::Initialize() {
         streamConfig.height = 2;
         streamConfig.minimumFrameInterval = CMTimeMake(1, 1);
 
+        captureThis->filter = contentFilter;
         captureThis->config = streamConfig;
         captureThis->stream = [[SCStream alloc] initWithFilter:contentFilter
                                                  configuration:streamConfig
-                                                      delegate:nil];
-        initSuccess = true;
+                                                      delegate:captureThis->delegate];
+        captureThis->activeStream.store((__bridge void*)captureThis->stream);
+        initSuccess = captureThis->stream != nil;
         initDone = true;
         dispatch_semaphore_signal(sem);
     }];
 
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+    long waitResult = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+    if (waitResult != 0 || !initDone) {
+        std::cerr << "Timeout waiting for ScreenCaptureKit" << std::endl;
+        return false;
+    }
+    if (initError) {
+        ErrorHandler::PrintNSError(initError, "Failed to get shareable content");
+        return false;
+    }
+    if (!initSuccess) {
+        std::cerr << "Failed to initialize ScreenCaptureKit" << std::endl;
+        return false;
+    }
 
-    if (!initDone) { std::cerr << "Timeout waiting for ScreenCaptureKit" << std::endl; return false; }
-    if (initError) { ErrorHandler::PrintNSError(initError, "Failed to get shareable content"); return false; }
-    if (!initSuccess) { std::cerr << "Failed to initialize ScreenCaptureKit" << std::endl; return false; }
-
-    if (cfg.mute) std::cerr << "Note: Mute functionality is not yet implemented" << std::endl;
-
-    std::cerr << "\n✓ Initialization successful!" << std::endl;
-    std::cerr << "========================================" << std::endl;
-    std::cerr << "Output Audio Format:" << std::endl;
-    std::cerr << "  Sample Rate: " << targetSampleRate << " Hz" << std::endl;
-    std::cerr << "  Channels:    " << targetChannels << std::endl;
-    std::cerr << "  Bit Depth:   " << targetBitDepth << " bits" << std::endl;
-    std::cerr << "========================================\n" << std::endl;
     return true;
 }
 
-void SystemAudioCapture::StartCapture() {
-    if (!stream) return;
+bool SystemAudioCapture::StartStream() {
+    if (!stream || stopRequested.load()) return false;
 
-    freopen(nullptr, "wb", stdout);
-
-    delegate = [[AudioStreamDelegate alloc] init];
-    delegate.capture = this;
-    audioQueue = dispatch_queue_create("com.audiocapture.audio", DISPATCH_QUEUE_SERIAL);
-
+    streamFailed.store(false);
     NSError* error = nil;
     [stream addStreamOutput:delegate type:SCStreamOutputTypeAudio
              sampleHandlerQueue:audioQueue error:&error];
-    if (error) { ErrorHandler::PrintNSError(error, "Failed to add stream output"); return; }
+    if (error) { ErrorHandler::PrintNSError(error, "Failed to add stream output"); return false; }
 
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     __block NSError* startError = nil;
@@ -196,12 +224,19 @@ void SystemAudioCapture::StartCapture() {
         startError = err;
         dispatch_semaphore_signal(sem);
     }];
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
-    if (startError) { ErrorHandler::PrintNSError(startError, "Failed to start capture"); return; }
+    long waitResult = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+    if (waitResult != 0) {
+        std::cerr << "Timeout waiting for ScreenCaptureKit to start" << std::endl;
+        return false;
+    }
+    if (startError) { ErrorHandler::PrintNSError(startError, "Failed to start capture"); return false; }
+    if (streamFailed.load()) return false;
 
-    std::cerr << "Capture started (ScreenCaptureKit audio-only mode)" << std::endl;
+    return true;
+}
 
-    while (g_running.load()) usleep(100000);
+void SystemAudioCapture::StopStream() {
+    if (!stream) return;
 
     dispatch_semaphore_t stopSem = dispatch_semaphore_create(0);
     [stream stopCaptureWithCompletionHandler:^(NSError*) {
@@ -209,15 +244,81 @@ void SystemAudioCapture::StartCapture() {
     }];
     dispatch_semaphore_wait(stopSem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
 
-    if (needsResampling && resampler) {
-        std::vector<uint8_t> finalData;
-        resampler->Flush(finalData);
-        if (!finalData.empty()) {
-            std::lock_guard<std::mutex> lock(writeMutex);
-            fwrite(finalData.data(), 1, finalData.size(), stdout);
-            fflush(stdout);
+    activeStream.store(nullptr);
+    stream = nil;
+    filter = nil;
+    config = nil;
+}
+
+void SystemAudioCapture::FlushOutput() {
+    if (!needsResampling || !resampler) return;
+
+    std::vector<uint8_t> finalData;
+    resampler->Flush(finalData);
+    if (!finalData.empty()) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        fwrite(finalData.data(), 1, finalData.size(), stdout);
+        fflush(stdout);
+    }
+}
+
+bool SystemAudioCapture::StartCapture() {
+    if (!stream) return false;
+
+    freopen(nullptr, "wb", stdout);
+    audioQueue = dispatch_queue_create("com.audiocapture.audio", DISPATCH_QUEUE_SERIAL);
+
+    if (!StartStream()) {
+        streamFailed.store(true);
+    } else {
+        std::cerr << "Capture started (ScreenCaptureKit audio-only mode)" << std::endl;
+    }
+
+    constexpr int maxReconnectAttempts = 3;
+    bool captureHealthy = true;
+
+    while (g_running.load()) {
+        if (!streamFailed.load()) {
+            usleep(100000);
+            continue;
+        }
+
+        bool recovered = false;
+        for (int attempt = 1; attempt <= maxReconnectAttempts && g_running.load(); ++attempt) {
+            activeStream.store(nullptr);
+            stream = nil;
+            filter = nil;
+            config = nil;
+            streamFailed.store(false);
+
+            if (attempt > 1) usleep(250000 * attempt);
+
+            std::cerr << "Rebuilding ScreenCaptureKit stream (attempt "
+                      << attempt << "/" << maxReconnectAttempts << ")" << std::endl;
+
+            if (CreateStream() && StartStream()) {
+                std::cerr << "ScreenCaptureKit stream recovered" << std::endl;
+                recovered = true;
+                break;
+            }
+
+            streamFailed.store(true);
+        }
+
+        if (!g_running.load()) break;
+        if (!recovered) {
+            std::cerr << "Failed to rebuild ScreenCaptureKit stream" << std::endl;
+            captureHealthy = false;
+            break;
         }
     }
+
+    if (stopRequested.load() && !streamFailed.load()) {
+        StopStream();
+    }
+
+    FlushOutput();
+    return captureHealthy;
 }
 
 void SystemAudioCapture::OnAudioBuffer(CMSampleBufferRef sampleBuffer) {
@@ -301,12 +402,25 @@ void SystemAudioCapture::OnAudioBuffer(CMSampleBufferRef sampleBuffer) {
     }
 }
 
+void SystemAudioCapture::OnStreamStopped(SCStream* stoppedStream, NSError* error) {
+    if (stopRequested.load() || activeStream.load() != (__bridge void*)stoppedStream) return;
+
+    std::cerr << "ScreenCaptureKit stream stopped unexpectedly" << std::endl;
+    if (error) {
+        ErrorHandler::PrintNSError(error, "ScreenCaptureKit stream error");
+    }
+
+    streamFailed.store(true);
+}
+
 void SystemAudioCapture::Stop() {
+    stopRequested.store(true);
     g_running.store(false);
 }
 
 void SystemAudioCapture::Cleanup() {
     if (delegate) delegate.capture = nullptr;
     if (resampler) resampler.reset();
+    activeStream.store(nullptr);
     stream = nil; filter = nil; config = nil; delegate = nil; audioQueue = nil;
 }

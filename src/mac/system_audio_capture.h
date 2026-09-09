@@ -15,8 +15,8 @@ class SystemAudioCapture;
 extern SystemAudioCapture* g_capture;
 extern std::atomic<bool> g_running;
 
-// ObjC delegate that receives audio buffers from SCStream
-@interface AudioStreamDelegate : NSObject <SCStreamOutput>
+// ObjC delegate that receives audio buffers and stream lifecycle events from SCStream
+@interface AudioStreamDelegate : NSObject <SCStreamOutput, SCStreamDelegate>
 @property (nonatomic, assign) SystemAudioCapture* capture;
 @end
 
@@ -40,14 +40,23 @@ private:
     std::mutex writeMutex;
     std::vector<uint8_t> audioOutputBuffer;
     std::vector<float> interleaveBuffer;
+    std::atomic<bool> stopRequested{false};
+    std::atomic<bool> streamFailed{false};
+    std::atomic<void*> activeStream{nullptr};
+
+    bool CreateStream();
+    bool StartStream();
+    void StopStream();
+    void FlushOutput();
 
 public:
     SystemAudioCapture(const CaptureConfig& c) : cfg(c) {}
     ~SystemAudioCapture() { Cleanup(); }
 
     bool Initialize();
-    void StartCapture();
+    bool StartCapture();
     void OnAudioBuffer(CMSampleBufferRef sampleBuffer);
+    void OnStreamStopped(SCStream* stoppedStream, NSError* error);
     void Stop();
     void Cleanup();
 };

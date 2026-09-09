@@ -76,7 +76,14 @@ int main(int argc, char* argv[]) {
     std::cerr << "Audio data will be written to stdout (binary PCM format)" << std::endl;
     std::cerr << "========================================\n" << std::endl;
 
+#ifdef __APPLE__
+    if (!capture.StartCapture()) {
+        std::cerr << "\nCapture failed." << std::endl;
+        return static_cast<int>(ErrorCode::UNKNOWN_ERROR);
+    }
+#else
     capture.StartCapture();
+#endif
 
     std::cerr << "\nCapture stopped." << std::endl;
     return static_cast<int>(ErrorCode::SUCCESS);
